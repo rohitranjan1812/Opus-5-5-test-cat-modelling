@@ -188,3 +188,33 @@ def mitigation(res: AnalysisResult, preset: str | None = None, flt: dict | None 
         "top_locations": [{"loc_id": str(L["loc_id"].iloc[i]), "saving": float(saved[i])}
                           for i in np.argsort(saved)[::-1][:15] if saved[i] > 0],
     }
+
+
+def marginal_accounts(res: AnalysisResult, acc_ids: list[str]) -> dict:
+    """Marginal impact of removing accounts: CRN re-run with their exposure zeroed.
+
+    Because every other location keeps identical random draws, the delta isolates the accounts'
+    contribution including diversification — the quantity a capital-aware underwriter needs.
+    """
+    import copy
+
+    ctx = res.ctx
+    L = ctx.portfolio.locations
+    mask = L["acc_id"].astype(str).isin([str(a) for a in acc_ids]).to_numpy()
+    if not mask.any():
+        return {"acc_ids": acc_ids, "n_locations": 0, "message": "no matching accounts"}
+    fin2 = copy.copy(ctx.fin)
+    fin2.tiv = ctx.fin.tiv.copy()
+    fin2.tiv[mask] = 0.0
+    ann2 = rerun_ylt(res, fin=fin2)["annual"]
+    loc_aal2 = run_elt(ctx, res.config.elt_samples, fin=fin2)[5]
+    base, without = base_metrics(res), _metrics(ann2)
+    euler_tvar = float(res.loc_cotvar[mask].sum())
+    return {
+        "acc_ids": acc_ids, "n_locations": int(mask.sum()), "tiv": float(ctx.portfolio.tiv.sum(axis=1)[mask].sum()),
+        "base": base, "without": without,
+        "marginal": {k: base[k] - without[k] for k in base},
+        "aal_standalone_in_portfolio": float(res.loc_aal_gross[mask].sum()),
+        "aal_marginal_elt": float(res.loc_aal_gross.sum() - loc_aal2.sum()),
+        "euler_tvar_contribution": euler_tvar,
+    }

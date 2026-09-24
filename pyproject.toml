@@ -34,6 +34,7 @@ packages = ["catforge"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning:fastapi.*", "ignore:Using `httpx`:DeprecationWarning"]
 
 [tool.ruff]
 line-length = 110
