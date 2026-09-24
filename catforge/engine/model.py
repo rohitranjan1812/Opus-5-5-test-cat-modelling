@@ -192,7 +192,7 @@ def _combine(model: CatModel, portfolio: Portfolio, cfg: AnalysisConfig, fin: Fi
     for n, peril in enumerate(perils):
         cat = model.catalogs[peril]
 
-        def sub(f, n=n):
+        def sub(f, n=n, peril=peril):
             if progress:
                 progress(0.02 + 0.33 * (n + f) / len(perils), f"Footprints: {peril}")
 
