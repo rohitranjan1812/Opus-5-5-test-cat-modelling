@@ -66,7 +66,7 @@ def generate_insights(res) -> list[dict]:
 
     # 2 — peril contribution to the tail ----------------------------------------------------------
     split = peril_tail_split(res, rp)
-    if len(split) > 1:
+    if sum(v["aal"] > 0 for v in split.values()) > 1:
         s_aal = sum(v["aal"] for v in split.values()) or 1e-300
         s_cot = sum(v["cotvar"] for v in split.values()) or 1e-300
         dom = max(split, key=lambda p: split[p]["cotvar"])
