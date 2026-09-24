@@ -43,6 +43,7 @@ INFLOW_DEG = 20.0
 KD_ALPHA = 0.095  # 1/h   Kaplan-DeMaria decay rate
 KD_VB = 13.75  # m/s  background wind
 HURRICANE_VMIN = 33.0
+DP_CAP_HPA = 140.0  # ~ record Atlantic central-pressure deficit; beyond it B_s rises instead
 WEIBULL_K = 1.6
 WEIBULL_C = 15.5
 VMAX_CAP = 88.0
@@ -89,6 +90,10 @@ def dp_from_vmax(vmax, vt, lat, eps_r, eps_b, n_iter: int = 6):
     for _ in range(n_iter):
         b = np.clip(holland_bs(dp, lat, vt) + 0.12 * eps_b, 1.0, 2.2)
         dp = RHO_AIR * E * vs**2 / b / 100.0
+    # Holland (2008) B_s decreases for extreme Δp; cap Δp near the observed record and let B absorb it
+    over = dp > DP_CAP_HPA
+    b = np.where(over, RHO_AIR * E * vs**2 / (DP_CAP_HPA * 100.0), b)
+    dp = np.minimum(dp, DP_CAP_HPA)
     rmax = np.clip(np.exp(3.015 - 6.291e-5 * dp**2 + 0.0337 * lat + 0.40 * eps_r), 8.0, 120.0)
     return dp, rmax, b
 
