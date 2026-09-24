@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+*.nbi
+*.nbc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+node_modules/
+frontend/dist/
+catforge_data/
+.DS_Store
+*.log

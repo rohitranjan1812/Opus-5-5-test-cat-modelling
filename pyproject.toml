@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "catforge"
+version = "0.1.0"
+description = "CatForge: a multi-peril catastrophe modelling platform (hazard, vulnerability, financial, Monte Carlo loss engine, analytics, REST API, UI)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+  "numpy>=1.26",
+  "scipy>=1.11",
+  "numba>=0.59",
+  "pandas>=2.1",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "pydantic>=2.6",
+  "python-multipart>=0.0.9",
+  "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+parquet = ["pyarrow>=15"]
+
+[project.scripts]
+catforge = "catforge.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["catforge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501", "B008", "UP007"]
