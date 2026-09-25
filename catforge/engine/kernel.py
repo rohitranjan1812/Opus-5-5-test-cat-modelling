@@ -10,6 +10,13 @@ For each occurrence k of event e (peril p) and each affected site j:
     U_kj  = Φ(x_kj)
     D_kj  = F⁻¹(U_kj | ln m_ej + η_k + W_kj)              inverse CDF of the damage table
             (in legacy copula mode W is integrated into the table and omitted here)
+    Storm surge (hurricane pairs with a water level), a two-part draw keyed by the building's 2′ node n:
+    wet   = u(k, WET+n) < π_ej                            connectivity (calibrated logistic)
+    ζ_kj  = WSE_ej + σ_e Φ⁻¹(u(k, SURGE_E)) + σ_s,j Φ⁻¹(u(k, SURGE+n))   wet water surface (m);
+            WSE_ej already carries the site response δ_n, σ_s,j² = σ² + Var(δ_n); buildings sharing a
+            node share both draws, as they share one stencil water level in the full model
+    Ds_kj = m_j · f(ζ_kj − g_j − ff_j)                    depth over the first floor → depth–damage
+    D_kj  ← 1 − (1 − D_kj)(1 − Ds_kj)                     wind and surge combined before any terms
     → coverage losses → site terms → account terms → per-risk → occurrence totals
 
 All normals come from the stateless counter RNG (``catforge.rng``): draws depend only on
@@ -25,7 +32,18 @@ import numba as nb
 import numpy as np
 
 from ..physics.grf import TAG_W_BASE
-from ..rng import TAG_CELL_BASE, TAG_ETA, TAG_LOC_BASE, TAG_Z, norm_cdf, stream, uniform
+from ..rng import (
+    TAG_CELL_BASE,
+    TAG_ETA,
+    TAG_LOC_BASE,
+    TAG_SURGE_BASE,
+    TAG_SURGE_E,
+    TAG_SURGE_WET,
+    TAG_Z,
+    norm_cdf,
+    stream,
+    uniform,
+)
 from ..rng import norm_ppf_fast as norm_ppf
 
 
@@ -69,6 +87,16 @@ def _sample_damage(cdf, v, li, li0, dli, u, bin_lo, bin_hi):
     return bin_lo[b] + frac * (bin_hi[b] - bin_lo[b])
 
 
+@nb.njit(inline="always", cache=True)
+def _coverage_gu(tiv, cov, j, v, d):
+    gu = tiv[j, 0] * d
+    if tiv[j, 1] > 0.0:
+        gu += tiv[j, 1] * min(1.0, cov[v, 0] * d ** cov[v, 1])
+    if tiv[j, 2] > 0.0:
+        gu += tiv[j, 2] * min(1.0, (d / cov[v, 2]) ** cov[v, 3])
+    return gu
+
+
 @nb.njit(parallel=True, cache=True)
 def loss_kernel(occ_event, occ_key, occ_w, seed,
                 ev_ptr, pair_loc, pair_logi, ev_peril,
@@ -78,12 +106,15 @@ def loss_kernel(occ_event, occ_key, occ_w, seed,
                 pol_ded, pol_lim, pol_att, pol_llim, pol_share,
                 pr_ret, pr_lim,
                 n_grp, want_loc, detail_ptr, max_pairs, n_chunks,
-                p_grf, p_phi, vptr, vnbr, vcoef, vsd, clo_ptr, clo):
+                p_grf, p_phi, vptr, vnbr, vcoef, vsd, clo_ptr, clo,
+                pair_wse, pair_pwet, loc_node, loc_ground, loc_ffh, loc_smod, p_surge, s_sig_e, loc_ssig,
+                s_d, s_dr):
     K = occ_event.shape[0]
     n_loc = tiv.shape[0]
     gu_out = np.zeros(K)
     gross_out = np.zeros(K)
     pr_out = np.zeros(K)
+    surge_out = np.zeros(K)
     grp_rows = K if n_grp > 0 else 1
     grp_out = np.zeros((grp_rows, max(n_grp, 1)))
     loc_cols = n_loc if want_loc else 0
@@ -123,9 +154,12 @@ def loss_kernel(occ_event, occ_key, occ_w, seed,
                     for t in range(vptr[per, jj], vptr[per, jj + 1]):
                         acc += vcoef[t] * wbuf[vnbr[t]]
                     wbuf[jj] = acc + vsd[per, jj] * norm_ppf(uniform(h, TAG_W_BASE + jj))
+            surge = p_surge[per] == 1
+            eps_se = norm_ppf(uniform(h, TAG_SURGE_E)) if surge else 0.0
             gu_tot = 0.0
             gross_tot = 0.0
             pr_tot = 0.0
+            sg_tot = 0.0
             p = a
             while p < b:
                 pol = loc_pol[pair_loc[p]]
@@ -142,11 +176,21 @@ def loss_kernel(occ_event, occ_key, occ_w, seed,
                         li += phi * wbuf[j]
                     d = _sample_damage(cdf, v, li, v_li0[v], v_dli[v], u, bin_lo, bin_hi)
                     d = min(1.0, d * dsc)
-                    gu = tiv[j, 0] * d
-                    if tiv[j, 1] > 0.0:
-                        gu += tiv[j, 1] * min(1.0, cov[v, 0] * d ** cov[v, 1])
-                    if tiv[j, 2] > 0.0:
-                        gu += tiv[j, 2] * min(1.0, (d / cov[v, 2]) ** cov[v, 3])
+                    gu = _coverage_gu(tiv, cov, j, v, d)
+                    if surge:
+                        wl = pair_wse[q]
+                        nd = loc_node[j]
+                        # a modelled water level reaches this building's node, and the node connects
+                        if wl == wl and uniform(h, TAG_SURGE_WET + nd) < pair_pwet[q]:
+                            zeta = wl + s_sig_e * eps_se + loc_ssig[j] * norm_ppf(uniform(h, TAG_SURGE_BASE + nd))
+                            depth = zeta - loc_ground[j]
+                            if depth > 0.02:
+                                ds = min(1.0, loc_smod[j] * np.interp(depth - loc_ffh[j], s_d, s_dr))
+                                if ds > 0.0:
+                                    d = 1.0 - (1.0 - d) * (1.0 - ds)
+                                    g_all = _coverage_gu(tiv, cov, j, v, d)
+                                    sg_tot += g_all - gu
+                                    gu = g_all
                     xl = min(max(gu - loc_ded[j, per], 0.0), loc_lim[j, per])
                     xbuf[q - p] = xl
                     gbuf[q - p] = gu
@@ -176,10 +220,11 @@ def loss_kernel(occ_event, occ_key, occ_w, seed,
             gu_out[k] = gu_tot
             gross_out[k] = gross_tot
             pr_out[k] = pr_tot
+            surge_out[k] = sg_tot
     loc_gross = np.zeros(loc_cols)
     loc_gu = np.zeros(loc_cols)
     for c in range(n_chunks):
         for j in range(loc_cols):
             loc_gross[j] += acc_gross[c, j]
             loc_gu[j] += acc_gu[c, j]
-    return gu_out, gross_out, pr_out, grp_out, loc_gross, loc_gu, det_gross, det_gu
+    return gu_out, gross_out, pr_out, grp_out, loc_gross, loc_gu, det_gross, det_gu, surge_out

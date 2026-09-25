@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { EChartsOption } from 'echarts'
 import { api } from '../api'
-import type { AnalysisSummary, EpResponse } from '../api'
+import type { AnalysisSummary, EpResponse, SurgeSummary } from '../api'
 import Chart from '../components/Chart'
 import { epOption } from '../components/charts'
 import MapView, { MapLegend } from '../components/MapView'
@@ -103,7 +103,31 @@ function EpTab({ id, s, mode }: { id: string; s: AnalysisSummary; mode: 'dark' |
           { key: 'otvar', label: 'OEP TVaR', align: 'r', value: (r) => oep[r.rp]?.tvar ?? 0, render: (r) => money(oep[r.rp]?.tvar) },
         ]} /> : <Empty>Loading…</Empty>}
       </Card>
+      {s.surge && <SurgeCard sg={s.surge} />}
     </div>
+  )
+}
+
+function SurgeCard({ sg }: { sg: SurgeSummary }) {
+  const m = sg.model
+  const f = (k: string, d = 2) => (typeof m[k] === 'number' ? (m[k] as number).toFixed(d) : '—')
+  return (
+    <Card title="Storm surge (hurricane)"
+      desc={`Multi-fidelity 2-D surge: 4′ runs for every event, corrected to the 2′ model by a calibrated two-part model (connectivity × wet level with a per-node site response). Held-out depth RMSE ${f('cv_depth_rmse_m')} m, bias ${typeof m.cv_depth_bias === 'number' ? pct(m.cv_depth_bias as number) : '—'}; σ event ${f('sigma_event_m')} m, σ site ${f('sigma_site_m')} m, τ ${f('tau_site_response_m')} m`}>
+      <div className="grid g4" style={{ marginBottom: 12 }}>
+        <Tile label="Surge share of hurricane AAL" value={pct(sg.share_of_tc_aal_gu)} foot={`${money(sg.aal_gu)} of ${money(sg.tc_aal_gu)} ground-up`} />
+        <Tile label="Locations reached by water" value={num(sg.n_locations_reached)} foot={`${num(sg.n_pairs_with_water)} event–location pairs`} />
+        <Tile label="With calibrated site response" value={num(sg.n_locations_with_site_response)} foot="Harbour/bay term from the 2′ model" />
+        <Tile label="Measured ground" value={num(sg.n_locations_measured_ground)} foot={sg.mean_p_wet == null ? 'Enrich exposure for building-scale ground' : `Mean P(connected) ${pct(sg.mean_p_wet)}`} />
+      </div>
+      <DataTable rows={sg.aep} columns={[
+        { key: 'rp', label: 'Return period', render: (r) => rpLabel(r.rp) },
+        { key: 'tc', label: 'Hurricane AEP (GU)', align: 'r', render: (r) => money(r.tc_gu) },
+        { key: 'w', label: 'Wind only', align: 'r', render: (r) => money(r.tc_gu_wind_only) },
+        { key: 's', label: 'Surge-attributed AEP', align: 'r', render: (r) => money(r.surge_gu) },
+        { key: 'u', label: 'Uplift from surge', align: 'r', value: (r) => r.uplift ?? 0, render: (r) => (r.uplift == null ? '—' : pct(r.uplift)) },
+      ]} />
+    </Card>
   )
 }
 

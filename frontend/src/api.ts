@@ -32,6 +32,13 @@ export interface AnalysisSummary {
   analytic: { rp: number; oep: number; aep: number }[]; analytic_aal: number
   tail_check: { tvar_direct: number; tvar_alloc_sum: number; rp: number; n_tail_years: number; max_abs_occ_diff: number }
   reinsurance: { program: Program; metrics: ReinsMetrics } | null; insights: Insight[]
+  surge?: SurgeSummary | null
+}
+export interface SurgeSummary {
+  aal_gu: number; tc_aal_gu: number; share_of_tc_aal_gu: number
+  aep: { rp: number; tc_gu: number; tc_gu_wind_only: number; surge_gu: number; uplift: number | null }[]
+  n_pairs_with_water: number; n_locations_reached: number; n_locations_measured_ground: number
+  n_locations_with_site_response: number; mean_p_wet: number | null; model: Record<string, number | string | null>
 }
 export interface AnalysisBrief {
   id: string; name: string; portfolio_id: string; portfolio_name: string; created: string; n_years: number

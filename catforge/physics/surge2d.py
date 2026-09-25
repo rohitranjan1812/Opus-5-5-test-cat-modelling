@@ -165,16 +165,26 @@ def _step(eta, M, N, z, zc, dx, dxn, dy, fcor, taux, tauy, ib, nman, dt, active,
 
 
 def run_surge(tr, t_start: float, t_end: float, pad_deg: float = 2.5, dt: float = 30.0, forcing_every: int = 20,
-              frame_hours: float = 1.0, max_cells: int = 160_000, sites_lat=None, sites_lon=None, sites_ground=None):
-    """Integrate the surge model along a track; returns frames, maxima and site water levels."""
+              frame_hours: float = 1.0, max_cells: int = 160_000, sites_lat=None, sites_lon=None, sites_ground=None,
+              bbox=None, stride: int | None = None, keep_frames: bool = True):
+    """Integrate the surge model along a track; returns frames, maxima and site water levels.
+
+    ``bbox`` (lon0, lat0, lon1, lat1) and ``stride`` (grid coarsening of the 2′ DEM) override the
+    track-following domain — the stochastic engine's low-fidelity mode uses a landfall-centred box at
+    stride 2–3 with a CFL-sized ``dt``.
+    """
     tt, tlat, tlon = tr[0], tr[1], tr[2]
-    m = (tt >= t_start - 1) & (tt <= t_end + 1)
-    la0, la1 = float(tlat[m].min()) - pad_deg, float(tlat[m].max()) + pad_deg
-    lo0, lo1 = float(tlon[m].min()) - pad_deg - 0.5, float(tlon[m].max()) + pad_deg + 0.5
+    if bbox is None:
+        m = (tt >= t_start - 1) & (tt <= t_end + 1)
+        la0, la1 = float(tlat[m].min()) - pad_deg, float(tlat[m].max()) + pad_deg
+        lo0, lo1 = float(tlon[m].min()) - pad_deg - 0.5, float(tlon[m].max()) + pad_deg + 0.5
+    else:
+        lo0, la0, lo1, la1 = bbox
     lat, lon, z = subgrid(la0, la1, lo0, lo1)
-    stride = 1
-    while (lat.size // stride) * (lon.size // stride) > max_cells:
-        stride += 1
+    if stride is None:
+        stride = 1
+        while (lat.size // stride) * (lon.size // stride) > max_cells:
+            stride += 1
     if stride > 1:
         lat, lon, z = lat[::stride], lon[::stride], z[::stride, ::stride]
     z = z.astype(np.float64)
@@ -225,9 +235,11 @@ def run_surge(tr, t_start: float, t_end: float, pad_deg: float = 2.5, dt: float 
             g = np.asarray(sites_ground, float)
             zs = np.where(np.isfinite(g), g, zs)
 
+    def site_wse(level, wet):
+        return np.where(wet[sy, sx], level[sy, sx], -np.inf).max(axis=1)
+
     def site_depth(level, wet):
-        ws = np.where(wet[sy, sx], level[sy, sx], -np.inf).max(axis=1)
-        return np.maximum(ws - zs, 0.0)
+        return np.maximum(site_wse(level, wet) - zs, 0.0)
     site_frames = []
     fa = np.zeros_like(taux)
     fb = np.zeros_like(tauy)
@@ -244,7 +256,8 @@ def run_surge(tr, t_start: float, t_end: float, pad_deg: float = 2.5, dt: float 
         _step(eta, M, N, z, zc, dx, dxn, dy, fcor, fa, fb, fi, nman, dt, active, openb)
         _track_max(eta, z, eta_max, t_max, t)
         if t >= next_frame - 1e-9:
-            frames.append(np.where(eta - z > H_DRY, eta, np.nan).astype(np.float32))
+            if keep_frames:
+                frames.append(np.where(eta - z > H_DRY, eta, np.nan).astype(np.float32))
             frame_t.append(t)
             if sy is not None:
                 site_frames.append(site_depth(eta, eta - z > H_DRY))
@@ -256,6 +269,9 @@ def run_surge(tr, t_start: float, t_end: float, pad_deg: float = 2.5, dt: float 
         "inundated_land": (z > 0) & (depth_max > H_DRY),
         "site_depth_frames": np.array(site_frames).T if site_frames else None,
         "site_depth_max": (site_depth(eta_max, depth_max > H_DRY) if sy is not None else None),
+        # ground-independent peak water surface near each site (NaN = no wet cell in its stencil)
+        "site_wse_max": (np.where(np.isfinite(w := site_wse(eta_max, depth_max > H_DRY)), w, np.nan)
+                         if sy is not None else None),
         "dt": dt, "stride_deg": float(lat[1] - lat[0]),
     }
 

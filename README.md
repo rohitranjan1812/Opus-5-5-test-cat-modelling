@@ -29,7 +29,7 @@ insights with numbers attached:
 
 | Layer | Highlights |
 |---|---|
-| **Hazard** | **Hurricane:** landfall-gate stochastic tracks, importance-sampled in both position and intensity; Holland (2008) surface wind field with the Sobey inflow profile and translational asymmetry; Kaplan–DeMaria inland decay; terrain gust factors. **Earthquake:** fault and area sources with truncated Gutenberg–Richter recurrence; finite, dipping planar ruptures (Wells–Coppersmith / Strasser) with R<sub>JB</sub> to the surface projection, which gives hanging-wall effects; BA08-form GMPE with non-linear site terms. **Both:** site hazard curves and return-period maps. |
+| **Hazard** | **Hurricane:** landfall-gate stochastic tracks, importance-sampled in both position and intensity; Holland (2008) surface wind field with the Sobey inflow profile and translational asymmetry; Kaplan–DeMaria inland decay; terrain gust factors. **Storm surge in the stochastic engine**, multi-fidelity: a 4′ 2-D shallow-water run for every event (about 0.07 s, cached per catalog), corrected to the 2′ model by a calibrated two-part model (logistic connectivity × a crossed random-effects level with a per-node harbour/bay site response). Wind and surge combine per building before any terms. **Earthquake:** fault and area sources with truncated Gutenberg–Richter recurrence; finite, dipping planar ruptures (Wells–Coppersmith / Strasser) with R<sub>JB</sub> to the surface projection, which gives hanging-wall effects; BA08-form GMPE with non-linear site terms. **Both:** site hazard curves and return-period maps. |
 | **Vulnerability** | Emanuel wind curves and HAZUS-style EQ fragilities. Modifiers for construction, occupancy, year built, storeys, roof shape and shutters. Secondary uncertainty is a zero-one-inflated Beta on damage bins, with within-event hazard uncertainty convolved in analytically. |
 | **Financial** | Site deductibles (% of TIV or flat) and limits. Account deductibles, limits, layers and shares. Per-risk XL. Reinsurance programmes with inuring stages: cat XL with reinstatements and AAD/AAL, quota share, stop-loss. Technical pricing by EL + kσ or cost of capital. |
 | **Engine** | Numba-parallel kernel driven by a stateless SplitMix64 counter-based RNG, so any draw can be regenerated exactly. **Spatially explicit dependence:** intra-event hazard residuals are a Matérn Gaussian random field, sampled exactly per occurrence with a Vecchia nearest-neighbour GP over precomputed per-event ancestor closures. A light copula couples damage residuals; the legacy two-level copula remains selectable. Mixed-Poisson frequency (gamma × ENSO regimes). Three passes: ELT (event × samples), YLT (occurrences), and an exact tail re-simulation for Euler allocation. |
@@ -254,8 +254,8 @@ These numbers come from the 5,000-location demo book ($16.25bn TIV), with 20,000
 - **Random fields:** the Vecchia field with m = 30 reproduces Matérn correlations to within 0.013–0.026.
 - **Wind:** the browser and server wind fields agree to about 0.002 m/s.
 
-**Tests:** `pytest` runs 66 tests covering the hazard physics, random fields, the surge solver
-(the analytic set-up and mass conservation), rupture kinematics, the Google 3D Tiles proxy, the PNG/MVT decoders and the enrichment pipeline, the maths identities, the financial
+**Tests:** `pytest` runs 72 tests covering the hazard physics, random fields, the surge solver
+(the analytic set-up and mass conservation), the stochastic surge (estimator recovery, hurdle calibration, kernel attribution), rupture kinematics, the Google 3D Tiles proxy, the PNG/MVT decoders and the enrichment pipeline, the maths identities, the financial
 terms, reinsurance path logic, the API and the SDK.
 
 ## Project layout
@@ -263,6 +263,7 @@ terms, reinsurance path logic, the API and the SDK.
 ```
 catforge/
   hazard/         tropical_cyclone.py · earthquake.py · footprint.py · base.py (catalogs, mixed-Poisson)
+                  surge.py (low-fidelity event surge, site levels, runtime model) · surge_calib.py (hurdle + EM)
   vulnerability/  damage.py (curves, zero-one-inflated Beta bins, convolution, tables)
   exposure/       portfolio.py (schema/validation/IO) · synthetic.py
   financial/      terms.py · reinsurance.py (programmes, pricing, optimiser)
@@ -277,7 +278,8 @@ catforge/
   scenario.py · client.py · cli.py · rng.py · geo.py · data/ (incl. etopo1_2min.npz)
 frontend/         React + TypeScript + ECharts + Leaflet; src/dev/ = MapLibre + deck.gl 3-D scenes,
                   footprint matching (footprints.ts), building layers (buildings.ts), Google 3D Tiles (google3d.ts)
-docs/             methodology.md
+docs/             methodology.md · validation/surge_tail.json
+scripts/          calibrate_surge.py (collect → fit) · validate_surge_tail.py (1-in-250 vs the full model)
 tests/
 ```
 
@@ -286,9 +288,11 @@ tests/
 1. **~~Spatially explicit dependence~~ — done** (Vecchia NNGP with per-event closures; §4.2).
    Next: non-stationary ranges (anisotropic along-track TC correlation, basin effects in EQ) and a
    posterior Vecchia conditioned on observed station data, for real-time event response.
-   **Surge next:** subgrid-corrected SWE (Kennedy et al. 2019) to capture bay funnelling
-   (Biscayne, Narragansett), wave set-up, and coupling surge frames directly into the engine's surge
-   peril.
+   **~~Surge in the engine~~ — done** (multi-fidelity, §1.4). **Surge next:** subgrid-corrected SWE
+   (Kennedy et al. 2019) in *both* fidelities, to capture bay funnelling (Biscayne, Narragansett) that
+   the site response can only learn where the design set reached. Also wave set-up, and an adaptive
+   design: pick the next full-model runs where the hurdle model's posterior loss variance is largest,
+   i.e. active learning on the tail.
 2. **Event-set compression.** Choose a weighted subset of events that preserves the portfolio EP to
    ±x% at chosen return periods. This can be framed as a quadrature or optimal-transport problem on
    the loss distribution, or as loss-based importance sampling with a variance-optimal proposal.

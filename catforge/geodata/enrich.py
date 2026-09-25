@@ -21,6 +21,7 @@ from collections.abc import Callable
 import numpy as np
 
 from ..exposure.portfolio import Portfolio
+from ..hazard.surge import coastal_mask  # noqa: F401  (re-exported for callers)
 from ..physics.dem import elevation
 from .buildings import match_footprints
 from .fetch import TileFetcher
@@ -29,13 +30,6 @@ from .terrain import ground_elevation
 DEFAULT_HEIGHT_M = 5.0  # OpenMapTiles render_height when OSM has no height / building:levels
 STOREY_M = 3.3
 SURGE_GROUND_FLOOR = 1.0  # the coarse-DEM ground assumed by the surge model when no measurement exists
-
-
-def coastal_mask(lat, lon, max_km: float = 30.0, max_elev_m: float = 20.0) -> np.ndarray:
-    from ..exposure.synthetic import _dist_to_coast_km
-
-    z = elevation(lat, lon, fill=np.inf)
-    return (_dist_to_coast_km(np.asarray(lat), np.asarray(lon)) < max_km) & (z < max_elev_m)
 
 
 def _stats(x: np.ndarray) -> dict:

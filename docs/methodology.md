@@ -98,6 +98,101 @@ For a site, λ(x) = Σ<sub>e</sub> λ<sub>e</sub> [1 − Φ((ln x − ln m<sub>e
 σ = √(σ<sub>b</sub>² + σ<sub>w</sub>²). The annual exceedance probability is 1 − e<sup>−λ(x)</sup>.
 Return-period maps invert λ(x) = −ln(1 − 1/T) by log-log interpolation.
 
+### 1.4 Storm surge in the stochastic engine — multi-fidelity
+
+Surge is part of the hurricane peril. It is on by default (`AnalysisConfig.tc_surge`) and flows
+through the kernel with the wind. The full 2-D model of §9.1 takes 3–12 s per event. A 4,800-event
+catalog, of which about 3,900 events bring ≥ 30 m/s gusts to a surge-reachable site, would take hours.
+So the engine runs a cheap model on every event and learns, statistically, how it differs from the
+full model.
+
+**Low fidelity, for every event (`hazard/surge.py`).** This is the same solver as §9.1, with three
+differences:
+
+- a landfall-centred box (±2.0° lat × ±2.5° lon) at 4′ (stride 2 on the 2′ DEM);
+- Δt = 90 s, with forcing refreshed every 12 steps, from −15 h to +9 h around landfall;
+- the whole time loop is fused into one `nogil` numba call, so events run concurrently on threads.
+
+That is about 0.07 s per event threaded and 0.27 s serial, **roughly 40–100× cheaper than the full
+model**. Open-coast peaks agree with the full model within 0–10 % (Hugo 5.93 vs 5.92 m, Ian 6.29 vs
+6.49 m, Michael 4.57 vs 4.86 m).
+
+The event product is portfolio-independent: the wet near-shore cells (z > −20 m, η > 0.1 m) with
+their peak water surface. It is cached on disk per catalog signature
+(`~/.cache/catforge/surge/lf_<sig>.npz`), so only the first run of a catalog pays.
+
+**Site level x.** Friction-limited penetration from the event's cells:
+
+x<sub>s</sub> = max<sub>c: d ≤ R</sub> [η<sub>c</sub> − α·max(d(c, s) − r₀, 0)]
+
+It is evaluated only for surge-reachable locations: within 30 km of the coast and below 20 m on the
+2′ DEM.
+
+**Correction to the full model — a two-part (hurdle) model (`hazard/surge_calib.py`).** The design
+set is 84 stratified catalog storms (7 coastal regions × 4 intensity classes), plus the 9 historical
+analogs. Both models are run on each. Every coastal 2′ node inside the box is recorded: land nodes,
+plus shoreline water nodes, which is where waterfront buildings geocode on a coarse DEM. That gives
+133,555 node-events, and the full model's value is the peak water surface in the node's 3×3 stencil —
+the rule the engine applies to buildings. Two processes decide what a node sees:
+
+- **connectivity.** P(wet) = σ(θ·[1, x, z, shore, x·z, x − z, (x − z)₊]), a logistic model fitted by
+  IRLS.
+- **level given wet.** y = s(x) + γ·[shore, z, x·shore, x·z] + u<sub>e</sub> + δ<sub>n</sub> + ε,
+  where s is a linear spline with knots at 1, 2, 3, 4 and 6 m, u<sub>e</sub> ~ N(0, σ<sub>e</sub>²) is
+  an event term, δ<sub>n</sub> ~ N(0, τ²) is the node's **site response** (the harbour/bay term), and
+  ε ~ N(0, σ²). The crossed random effects are fitted by EM with BLUP shrinkage.
+
+Here z is the node's 2′ ground, clipped to 0–10 m, and shore = 1 when the stencil touches the sea.
+Both are computed from the DEM by the same function (`site_covariates`) in calibration and in the
+engine. The shrunk δ̂<sub>n</sub> and its posterior variance are stored for 8,129 nodes
+(`data/surge_site_response.npz`). Nodes the design set never reached get the prior (0, τ²).
+
+Penetration parameters are chosen by 5-fold, event-grouped cross-validation of flood depth over the
+engine's default ground (the 2′ DEM floored at 1 m). The CV surface is flat for α between 0.15 and
+0.2 and R between 20 and 30 km. Among fits within 1 % of the best, the largest R is taken, because
+misses (flooded nodes that no 4′ cell reaches) are one-sided. The result is **α = 0.2 m/km,
+R = 30 km, r₀ = 3.5 km, σ = 0.45 m, σ<sub>e</sub> = 0.17 m, τ = 0.29 m.**
+
+**Why a hurdle model and not a Tobit.** Both look principled. At x ≥ 2 m, the held-out residuals of a
+censored single-Gaussian model have skew −0.8 to −2.1 and excess kurtosis 3–7. The error is a
+mixture: connected nodes sit above the fit, and sheltered nodes (behind barriers, in basins the 4′
+grid merges) sit far below it. A pooled Gaussian spends its lower tail on connected nodes, which cuts
+their expected depth. The sheltered nodes cannot give the depth back, because it is floored at 0 on
+their higher ground. So the Tobit is biased low exactly where losses are made. The table gives
+held-out E[depth] / full-model depth:
+
+| low-fidelity level x | 1–2 m | 2–3 m | 3–4 m | 4–6 m | ≥ 6 m | ground 3–5 m (x ≥ 2) |
+|---|---|---|---|---|---|---|
+| **hurdle (engine)** | 0.83 | **0.98** | **0.95** | **0.97** | **1.05** | **0.95** |
+| Tobit + site term | 1.05 | 0.78 | 0.69 | 0.65 | 0.64 | 0.34 |
+| OLS on wet-in-both pairs | 1.14 | 0.83 | 0.73 | 0.67 | 0.66 | 0.38 |
+
+Overall, the hurdle model has a held-out depth RMSE of 0.37 m (misses included), an aggregate depth
+bias of −2.4 %, a hit rate of 0.82 and a false-alarm ratio of 0.09. The Tobit and the OLS reach
+0.51 m. The OLS on wet pairs is a truncated sample, so it is biased too: +11 % in aggregate.
+Recalibrate with `python scripts/calibrate_surge.py collect && … fit` (about 10 minutes, then about
+10 seconds).
+
+**In the kernel.** Each hurricane pair carries the calibrated wet level
+WSE = s(x) + γ·covariates + δ̂<sub>n</sub> and the connectivity probability π. The draws are keyed
+by the building's **2′ node** n, not by the building. In the full model, buildings in one node share
+one stencil water level, so a concentrated book must not diversify that risk away:
+
+- wet if u(k, WET + n) < π;
+- ζ = WSE + σ<sub>e</sub>Φ⁻¹(u(k, SURGE_E)) + σ<sub>s,j</sub>Φ⁻¹(u(k, SURGE + n)), with
+  σ<sub>s,j</sub>² = σ² + Var δ̂<sub>n</sub>;
+- depth = ζ − g<sub>j</sub>, where g<sub>j</sub> is measured ground (§9.4) or else the 2′ DEM
+  floored at 1 m;
+- D<sub>s</sub> = m<sub>j</sub>·f(depth − ff<sub>j</sub>), using USACE-style depth–damage curves,
+  first-floor heights by era and occupancy (overridable with `first_floor_height_m`), and
+  storey/material/mobile-home modifiers.
+
+Wind and surge combine per building as D ← 1 − (1 − D<sub>w</sub>)(1 − D<sub>s</sub>), before any
+financial terms, so deductibles and limits see the combined loss. The surge share is attributed
+exactly: the kernel re-evaluates the coverage loss without surge from the *same* wind draw. The
+surge-attributed ground-up loss per occurrence is returned alongside, and the analysis summary gives
+the surge AAL share and the hurricane AEP with and without surge (`summary.surge`, the Results page).
+
 ---
 
 ## 2. Vulnerability
@@ -159,6 +254,8 @@ as follows:
 - The event factor Z uses index 1.
 - Cell factors use index 2⁴⁰ + cell id.
 - Site draws use index 16 + site id.
+- Surge uses index 2 for the event water-level error, 2³⁸ + node for the site water-level error, and
+  2³⁹ + node for connectivity. The node is the building's 2′ cell (§1.4).
 
 Consequences:
 
@@ -305,6 +402,14 @@ reports the Pareto frontier of expected net cost against net 1-in-200 AEP.
 - **Surge solver.** A uniform wind stress on a closed flat basin reaches the analytic set-up
   Δη = τL/(ρgh) within 6 %, and volume is conserved to 10⁻⁹ m. The Hugo analog peaks at 4–8 m
   near Bulls Bay. Buildings do not start flooded, coastal buildings flood, inland ones stay dry.
+- **Stochastic surge.** The low-fidelity peak tracks the full model (Hugo 4.5–7.5 m near Bulls
+  Bay). Friction-limited site extraction matches its closed form. The crossed mixed model recovers
+  known parameters from censored synthetic data (slope ±0.03, τ ±0.05, δ̂ correlation > 0.95) while
+  the wet-pair OLS is visibly biased. On synthetic data where connectivity and level separate, the
+  hurdle model's deep-water depth is within 6 % and beats the Tobit. In the kernel, surge adds loss
+  only through water above a building's ground: the same water on 12 m ground and an inland building
+  are unchanged to 10⁻⁹. The wind/surge split is exact (GU − surge = the wind-only run), and re-runs
+  are bit-identical.
 - **Rupture kinematics.** Σ μ·A·slip = M<sub>0</sub> exactly; S arrives after P; the vertical S travel
   time matches depth/β. The stochastic seismogram's geometric-mean PGA is within a factor 3 of the
   GMPE median.
