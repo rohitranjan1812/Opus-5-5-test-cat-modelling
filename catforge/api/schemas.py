@@ -46,6 +46,11 @@ class PerRiskModel(BaseModel):
     limit: float = Field(0.0, ge=0)
 
 
+class GrfParams(BaseModel):
+    nu: Literal[0.5, 1.5, 2.5] | None = Field(None, description="Matérn smoothness")
+    range_km: float | None = Field(None, gt=1, le=1000, description="Practical range (correlation 0.05)")
+
+
 class AnalysisConfigModel(BaseModel):
     name: str = "Analysis"
     perils: list[Peril] = Field(default_factory=lambda: ["TC", "EQ"])
@@ -62,6 +67,10 @@ class AnalysisConfigModel(BaseModel):
     reinsurance: ProgramModel | None = None
     group_by: Literal["state", "construction", "occupancy", "lob", "terrain"] = "state"
     allocation_rp: float = Field(250.0, ge=2, le=10000)
+    dependence: Literal["grf", "copula"] = Field(
+        "grf", description="Intra-event hazard dependence: Matérn random field (Vecchia NNGP) or legacy two-level copula")
+    grf: dict[Peril, GrfParams] = Field(default_factory=dict, description="Per-peril Matérn overrides")
+    vecchia_m: int = Field(30, ge=4, le=64, description="Vecchia conditioning-set size (accuracy vs speed)")
 
 
 class AnalysisRequest(BaseModel):

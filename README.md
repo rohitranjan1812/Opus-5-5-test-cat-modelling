@@ -7,7 +7,8 @@ layers:
 1. **A numerically serious engine**: numba kernels, a counter-based RNG, importance-sampled
    catalogs, and an analytic FFT cross-check.
 2. **An API-first service**: FastAPI with OpenAPI docs, a Python SDK and a CLI.
-3. **An analyst UI**: React, ECharts and Leaflet, with dark and light themes.
+3. **An analyst UI**: React, ECharts and Leaflet, with dark and light themes, plus a 3-D event
+   development view built on MapLibre and deck.gl.
 
 The engine produces a full distribution of losses, not just point estimates, and turns it into
 insights with numbers attached:
@@ -28,15 +29,49 @@ insights with numbers attached:
 
 | Layer | Highlights |
 |---|---|
-| **Hazard** | **Hurricane:** landfall-gate stochastic tracks, importance-sampled in both position and intensity; Holland (2008) surface wind field with translational asymmetry; Kaplan–DeMaria inland decay; terrain gust factors. **Earthquake:** fault and area sources with truncated Gutenberg–Richter recurrence; finite ruptures (Wells–Coppersmith / Strasser); BA08-form GMPE with non-linear site terms. **Both:** site hazard curves and return-period maps. |
+| **Hazard** | **Hurricane:** landfall-gate stochastic tracks, importance-sampled in both position and intensity; Holland (2008) surface wind field with the Sobey inflow profile and translational asymmetry; Kaplan–DeMaria inland decay; terrain gust factors. **Earthquake:** fault and area sources with truncated Gutenberg–Richter recurrence; finite, dipping planar ruptures (Wells–Coppersmith / Strasser) with R<sub>JB</sub> to the surface projection, which gives hanging-wall effects; BA08-form GMPE with non-linear site terms. **Both:** site hazard curves and return-period maps. |
 | **Vulnerability** | Emanuel wind curves and HAZUS-style EQ fragilities. Modifiers for construction, occupancy, year built, storeys, roof shape and shutters. Secondary uncertainty is a zero-one-inflated Beta on damage bins, with within-event hazard uncertainty convolved in analytically. |
 | **Financial** | Site deductibles (% of TIV or flat) and limits. Account deductibles, limits, layers and shares. Per-risk XL. Reinsurance programmes with inuring stages: cat XL with reinstatements and AAD/AAL, quota share, stop-loss. Technical pricing by EL + kσ or cost of capital. |
-| **Engine** | Numba-parallel kernel driven by a stateless SplitMix64 counter-based RNG, so any draw can be regenerated exactly. Two-level Gaussian copula (event and 0.25° cell factors) plus inter-event hazard residuals. Mixed-Poisson frequency (gamma × ENSO regimes). Three passes: ELT (event × samples), YLT (occurrences), and an exact tail re-simulation for Euler allocation. |
+| **Engine** | Numba-parallel kernel driven by a stateless SplitMix64 counter-based RNG, so any draw can be regenerated exactly. **Spatially explicit dependence:** intra-event hazard residuals are a Matérn Gaussian random field, sampled exactly per occurrence with a Vecchia nearest-neighbour GP over precomputed per-event ancestor closures. A light copula couples damage residuals; the legacy two-level copula remains selectable. Mixed-Poisson frequency (gamma × ENSO regimes). Three passes: ELT (event × samples), YLT (occurrences), and an exact tail re-simulation for Euler allocation. |
 | **Analytics** | OEP/AEP/TVaR with distribution-free order-statistic CIs. An analytic ELT → PGF → exponentially-tilted FFT EP as an independent check. Euler co-TVaR by any dimension. Stand-alone vs diversified segments. Marginal account impact. Automated, quantified insights. |
 | **What-ifs** | Exact year likelihood-ratio reweighting for frequency and intensity (climate) changes, with ESS reported. Exact ENSO conditioning. Common-random-number re-runs for vulnerability, correlation and mitigation. Tornado sensitivity. Instant reinsurance evaluation and an efficient-frontier optimiser. Historical analog and custom scenarios with a full loss distribution. |
+| **Event development (4-D)** | One realization of an event resolved in time over ETOPO1 terrain. **Hurricanes:** 2-D shallow-water storm surge with wetting/drying, R-CLIPER rain, the wind field recomputed in the browser from the engine's equations (parity-checked), NHC wind radii, and per-building wind + surge damage. **Earthquakes:** a kinematic finite-fault rupture (von Kármán slip), P/S isochrones, the shaking envelope, and on-demand EXSIM-style seismograms compared with the GMPE. |
 | **Interfaces** | REST API (`/docs`), Python SDK (`catforge.client`), in-process library, CLI, and a web UI. |
 
 The full mathematics is in **[docs/methodology.md](docs/methodology.md)**.
+
+### Event development in 3-D
+
+Pick a historical analog or any stochastic event. The server simulates one physically consistent
+realization; the browser then plays it back over real terrain and bathymetry.
+
+**Hurricane.** The Holland gust field (3-s, this realization) is evaluated per frame, with tracer
+particles advected through it. The view also shows:
+
+- the 2-D surge rising and flooding the coast;
+- NHC wind radii per quadrant;
+- each building's damage column growing as the running-maximum gust and water depth reach it.
+
+Click anywhere for a meteogram of gust, pressure, water level and rain.
+
+![Hurricane development: Ian analog at T−1 h — gust field, tracers, surge, wind radii, per-building damage, meteogram](docs/img/develop-tc.png)
+
+**Earthquake.** The fault plane is drawn below ground in x-ray, lighting up at its rupture times
+and coloured by slip. The P and S fronts sweep across the draped terrain, and the moment-rate
+function and loss accumulate as the S waves arrive. Click anywhere for a synthetic seismogram and
+its response spectrum against the GMPE.
+
+![Earthquake development: Northridge analog at t = 8 s — x-ray fault plane, P/S fronts, shaking, source time function](docs/img/develop-eq.png)
+![Synthetic seismogram and response spectrum vs GMPE at a clicked site](docs/img/develop-seismogram.png)
+
+```python
+from catforge.client import CatForgeClient
+cf = CatForgeClient("http://localhost:8000")
+dev = cf.develop(portfolio_id=pid, analog="ian_2022", seed=3)
+dev["surge"]["peak_m"], dev["loss"]["gu"][-1]            # peak water level (m), ground-up loss
+depth = cf.decode(dev["surge"]["max"]["land_depth_cm"])  # max inundation depth grid (m), NaN = dry
+sg = cf.seismogram(34.06, -118.30, analog="northridge_1994")  # acc/vel traces, PSA, GMPE ±1σ
+```
 
 ![Risk lab: climate re-weighting, ENSO conditioning, CRN tornado, mitigation and marginal impact](docs/img/risklab.png)
 
@@ -127,6 +162,9 @@ Validation maps aliases, coerces types, applies defaults and reports problems as
 | `POST /api/analyses/{id}/reinsurance`, `/reinsurance/optimize`, `/reinsurance/apply` | Programme evaluation, frontier, persist |
 | `POST /api/analyses/{id}/climate`, `/sensitivity`, `/mitigation`, `/marginal` | What-ifs |
 | `POST /api/scenarios/run`; `GET /api/scenarios/analogs` | Deterministic events and historical analogs |
+| `POST /api/develop` (`?wait=true`) | Time-resolved development of one event realization (surge, rain, rupture, per-building damage) |
+| `POST /api/develop/seismogram` | EXSIM-style synthetic seismogram and PSA at any site |
+| `GET /api/terrain/{z}/{x}/{y}.png` | ETOPO1 terrain/bathymetry as Terrarium tiles |
 | `GET /api/jobs/{id}` | Job progress and results |
 
 ## Validation & performance
@@ -152,7 +190,16 @@ These numbers come from the 5,000-location demo book ($16.25bn TIV), with 20,000
 | Reinsurance evaluation | ~15 ms |
 | Sensitivity tornado (13 CRN re-runs and re-weightings) | ~7 s |
 
-**Tests:** `pytest` runs 32 tests covering the hazard physics, the maths identities, the financial
+**Physics validation**
+
+- **Storm surge:** peak coastal water level against the historical record gives a median ratio of
+  about 0.96 (Hugo 5.9 vs 6.0 m, Michael 4.9 vs 4.7 m, Sandy 2.7 vs ≈2.9 m). The full table and the
+  known sub-grid misses are in the methodology.
+- **Random fields:** the Vecchia field with m = 30 reproduces Matérn correlations to within 0.013–0.026.
+- **Wind:** the browser and server wind fields agree to about 0.002 m/s.
+
+**Tests:** `pytest` runs 51 tests covering the hazard physics, random fields, the surge solver
+(the analytic set-up and mass conservation), rupture kinematics, the maths identities, the financial
 terms, reinsurance path logic, the API and the SDK.
 
 ## Project layout
@@ -166,19 +213,22 @@ catforge/
   engine/         kernel.py (numba loss kernel) · ylt.py · model.py (orchestration)
   analytics/      ep.py · analytic.py (FFT) · allocation.py · sensitivity.py · insights.py
   api/            app.py · schemas.py · store.py (jobs, persistence)
-  scenario.py · client.py · cli.py · rng.py · geo.py · data/
-frontend/         React + TypeScript + ECharts + Leaflet
+  physics/        grf.py (Matérn, Vecchia, circulant) · surge2d.py · tc_dynamics.py · eq_dynamics.py
+                  dem.py (ETOPO1, terrain tiles) · develop.py (4-D event payloads)
+  scenario.py · client.py · cli.py · rng.py · geo.py · data/ (incl. etopo1_2min.npz)
+frontend/         React + TypeScript + ECharts + Leaflet; src/dev/ = MapLibre + deck.gl 3-D scenes
 docs/             methodology.md
 tests/
 ```
 
 ## Where to push next — open problems worth solving together
 
-1. **Spatially explicit dependence.** Replace the two-level copula with a Gaussian random field on
-   intra-event residuals, using Matérn covariance and range ~ 10–40 km (Jayaram & Baker). The
-   challenge is sampling at 10⁵–10⁶ sites per occurrence. Options are an SPDE/GMRF representation
-   (sparse precision, Cholesky on a triangulated mesh) or a low-rank Nyström or random-Fourier-feature
-   approximation, with an error bound on the tail metrics.
+1. **~~Spatially explicit dependence~~ — done** (Vecchia NNGP with per-event closures; §4.2).
+   Next: non-stationary ranges (anisotropic along-track TC correlation, basin effects in EQ) and a
+   posterior Vecchia conditioned on observed station data, for real-time event response.
+   **Surge next:** subgrid-corrected SWE (Kennedy et al. 2019) to capture bay funnelling
+   (Biscayne, Narragansett), wave set-up, and coupling surge frames directly into the engine's surge
+   peril.
 2. **Event-set compression.** Choose a weighted subset of events that preserves the portfolio EP to
    ±x% at chosen return periods. This can be framed as a quadrature or optimal-transport problem on
    the loss distribution, or as loss-based importance sampling with a variance-optimal proposal.

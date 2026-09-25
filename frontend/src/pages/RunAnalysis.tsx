@@ -23,6 +23,10 @@ export default function RunAnalysis() {
   const [rateEQ, setRateEQ] = useState(1)
   const [tcInt, setTcInt] = useState(1)
   const [enso, setEnso] = useState(true)
+  const [dependence, setDependence] = useState<'grf' | 'copula'>('grf')
+  const [rangeTC, setRangeTC] = useState(60)
+  const [rangeEQ, setRangeEQ] = useState(30)
+  const [vecchiaM, setVecchiaM] = useState(30)
   const [dispersion, setDispersion] = useState(20)
   const [usePR, setUsePR] = useState(false)
   const [pr, setPr] = useState({ retention: 5e6, limit: 2e7 })
@@ -43,6 +47,8 @@ export default function RunAnalysis() {
       frequency: { TC: { dispersion_r: dispersion > 0 ? dispersion : null, regimes: enso ? [
         { name: 'La Niña', prob: 0.25, multiplier: 1.3 }, { name: 'Neutral', prob: 0.5, multiplier: 1.0 },
         { name: 'El Niño', prob: 0.25, multiplier: 0.65 }] : [] } },
+      dependence, vecchia_m: vecchiaM,
+      grf: dependence === 'grf' ? { TC: { range_km: rangeTC }, EQ: { range_km: rangeEQ } } : {},
       per_risk: usePR ? pr : null,
       reinsurance: useRe && program.contracts.length ? program : null,
     }
@@ -110,6 +116,21 @@ export default function RunAnalysis() {
           <div className="row mt">
             <label className="check"><input type="checkbox" checked={enso} onChange={(e) => setEnso(e.target.checked)} />ENSO regimes for hurricane frequency</label>
           </div>
+          <div className="row mt" style={{ gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <label className="field"><span>Spatial dependence</span>
+              <select value={dependence} onChange={(e) => setDependence(e.target.value as 'grf' | 'copula')}>
+                <option value="grf">Matérn random field (Vecchia NNGP)</option>
+                <option value="copula">Two-level Gaussian copula (legacy)</option>
+              </select></label>
+            {dependence === 'grf' && <>
+              <NumberField label="TC range" suffix="km" value={rangeTC} step={10} min={5} max={500} onChange={setRangeTC} />
+              <NumberField label="EQ range" suffix="km" value={rangeEQ} step={5} min={5} max={300} onChange={setRangeEQ} />
+              <NumberField label="Vecchia m" value={vecchiaM} step={2} min={4} max={64} onChange={setVecchiaM} />
+            </>}
+          </div>
+          <div className="small muted mt">{dependence === 'grf'
+            ? 'Intra-event hazard residuals are a Matérn Gaussian random field (TC ν = 1.5, EQ ν = 0.5), sampled exactly per event with a nearest-neighbour Gaussian process; “Correlation ρ ×” scales the ranges.'
+            : 'Legacy mode: hazard and damage residuals coupled through an event factor and 0.25° cell factors.'}</div>
         </Card>
       </div>
       <Card title="Reinsurance programme" tools={<label className="check"><input type="checkbox" checked={useRe} onChange={(e) => setUseRe(e.target.checked)} />include</label>}

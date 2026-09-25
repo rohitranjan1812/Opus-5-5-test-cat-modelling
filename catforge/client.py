@@ -150,3 +150,31 @@ class CatForgeClient:
         out = self.post("/api/scenarios/run", json={"portfolio_id": portfolio_id, "analog": analog, "peril": peril,
                                                     "params": params, "n_samples": n_samples})
         return out["result"]
+
+    # ------------------------------------------------------------------ event development (4-D)
+    def develop(self, portfolio_id: str | None = None, analog: str | None = None, peril: str | None = None,
+                event_id: int | None = None, params: dict | None = None, seed: int = 1, surge: bool = True) -> dict:
+        """Time-resolved realization of one event (surge/rain frames or rupture/wave grids, per-building damage)."""
+        job = self.post("/api/develop", json={"portfolio_id": portfolio_id, "analog": analog, "peril": peril,
+                                              "event_id": event_id, "params": params, "seed": seed, "surge": surge})
+        return self.wait(job)["result"]
+
+    def seismogram(self, lat: float, lon: float, analog: str | None = None, event_id: int | None = None,
+                   params: dict | None = None, vs30: float = 400.0, seed: int = 1) -> dict:
+        """Stochastic finite-fault seismogram + 5 %-damped PSA at a site, with the GMPE median ±1σ for comparison."""
+        return self.post("/api/develop/seismogram", json={"analog": analog, "peril": "EQ", "event_id": event_id,
+                                                           "params": params, "lat": lat, "lon": lon, "vs30": vs30,
+                                                           "seed": seed})
+
+    @staticmethod
+    def decode(arr: dict):
+        """Decode a base64 grid from a development payload into a float numpy array (NaN for gaps)."""
+        import base64
+
+        import numpy as np
+
+        raw = np.frombuffer(base64.b64decode(arr["b64"]), {"int16": "<i2", "uint8": "u1", "float32": "<f4"}[arr["dtype"]])
+        out = raw.astype(float).reshape(arr["shape"])
+        if arr.get("nan") is not None:
+            out[raw.reshape(arr["shape"]) == arr["nan"]] = np.nan
+        return out / arr["scale"]

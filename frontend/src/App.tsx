@@ -1,3 +1,4 @@
+import { Suspense, lazy } from 'react'
 import type { ReactNode } from 'react'
 import { AppProvider, useApp } from './state'
 import type { Page } from './state'
@@ -13,6 +14,8 @@ import RiskLab from './pages/RiskLab'
 import Scenarios from './pages/Scenarios'
 import ApiPage from './pages/ApiPage'
 
+const Develop = lazy(() => import('./pages/Develop'))
+
 const I = (d: string) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <path d={d} />
@@ -27,6 +30,7 @@ const NAV: { page: Page; label: string; icon: ReactNode; section?: string }[] = 
   { page: 'reinsurance', label: 'Reinsurance', icon: I('M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z') },
   { page: 'risklab', label: 'Risk lab', icon: I('M9 3h6M10 3v6L4 19a1 1 0 0 0 1 2h14a1 1 0 0 0 1-2L14 9V3') },
   { page: 'scenarios', label: 'Scenarios', icon: I('M3 12h4l3-8 4 16 3-8h4') },
+  { page: 'develop', label: 'Event development 3-D', icon: I('M12 3l9 5-9 5-9-5zM3 13l9 5 9-5M3 17.5l9 5 9-5') },
   { page: 'api', label: 'API & SDK', icon: I('M8 6l-6 6 6 6M16 6l6 6-6 6'), section: 'Developers' },
 ]
 
@@ -36,7 +40,8 @@ function Shell() {
   const current = analyses.find((a) => a.id === analysisId)
   const pages: Record<Page, ReactNode> = {
     overview: <Overview />, exposure: <Exposure />, hazard: <Hazard />, run: <RunAnalysis />, results: <Results />,
-    reinsurance: <Reinsurance />, risklab: <RiskLab />, scenarios: <Scenarios />, api: <ApiPage />,
+    reinsurance: <Reinsurance />, risklab: <RiskLab />, scenarios: <Scenarios />,
+    develop: <Suspense fallback={<div className="empty">Loading 3-D engine…</div>}><Develop /></Suspense>, api: <ApiPage />,
   }
   return (
     <div className="shell">

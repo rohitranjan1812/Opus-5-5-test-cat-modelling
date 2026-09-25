@@ -28,13 +28,14 @@ import numba as nb
 import numpy as np
 
 from ..hazard.tropical_cyclone import pressure_deficit, wind_uv
-from .dem import subgrid
+from .dem import elevation, subgrid
 from .tc_dynamics import track_state
 
 RHO_W = 1025.0
 RHO_A = 1.15
 G = 9.81
 H_DRY = 0.05
+SITE_GROUND_MIN = 1.0  # m: a building stands on land even where its coarse cell averages to sea
 H_CAP = 200.0
 Z_WALL = 15.0
 R_EARTH = 6371000.0
@@ -210,10 +211,20 @@ def run_surge(tr, t_start: float, t_end: float, pad_deg: float = 2.5, dt: float 
     frames, frame_t = [], []
     next_frame = t_start
     n_steps = int((t_end - t_start) * 3600.0 / dt)
-    sy = sx = None
+    sy = sx = zs = None
     if sites_lat is not None and len(sites_lat):
-        sy = np.clip(np.rint((np.asarray(sites_lat) - lat[0]) / (lat[1] - lat[0])).astype(int), 0, ny - 1)
-        sx = np.clip(np.rint((np.asarray(sites_lon) - lon[0]) / (lon[1] - lon[0])).astype(int), 0, nx - 1)
+        # sub-grid inundation: building ground (full-res DEM) vs the water surface of wet cells in its 3×3 stencil
+        cy = np.rint((np.asarray(sites_lat) - lat[0]) / (lat[1] - lat[0])).astype(int)
+        cx = np.rint((np.asarray(sites_lon) - lon[0]) / (lon[1] - lon[0])).astype(int)
+        off = np.array([-1, 0, 1])
+        sy = np.clip(np.repeat(cy[:, None] + off[None, :], 3, axis=1), 0, ny - 1)
+        sx = np.clip(np.tile(cx[:, None] + off[None, :], (1, 3)), 0, nx - 1)
+        zs = np.maximum(elevation(np.asarray(sites_lat, float), np.asarray(sites_lon, float), fill=SITE_GROUND_MIN),
+                        SITE_GROUND_MIN)
+
+    def site_depth(level, wet):
+        ws = np.where(wet[sy, sx], level[sy, sx], -np.inf).max(axis=1)
+        return np.maximum(ws - zs, 0.0)
     site_frames = []
     fa = np.zeros_like(taux)
     fb = np.zeros_like(tauy)
@@ -233,7 +244,7 @@ def run_surge(tr, t_start: float, t_end: float, pad_deg: float = 2.5, dt: float 
             frames.append(np.where(eta - z > H_DRY, eta, np.nan).astype(np.float32))
             frame_t.append(t)
             if sy is not None:
-                site_frames.append(np.maximum(eta[sy, sx] - z[sy, sx], 0.0))
+                site_frames.append(site_depth(eta, eta - z > H_DRY))
             next_frame += frame_hours
     depth_max = np.maximum(eta_max - z, 0.0)
     return {
@@ -241,7 +252,7 @@ def run_surge(tr, t_start: float, t_end: float, pad_deg: float = 2.5, dt: float 
         "depth_max": depth_max, "t_max": t_max,
         "inundated_land": (z > 0) & (depth_max > H_DRY),
         "site_depth_frames": np.array(site_frames).T if site_frames else None,
-        "site_depth_max": (np.maximum(eta_max[sy, sx] - z[sy, sx], 0.0) if sy is not None else None),
+        "site_depth_max": (site_depth(eta_max, depth_max > H_DRY) if sy is not None else None),
         "dt": dt, "stride_deg": float(lat[1] - lat[0]),
     }
 

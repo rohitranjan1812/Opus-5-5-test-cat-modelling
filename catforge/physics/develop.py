@@ -133,6 +133,14 @@ def _damage_uniforms(n, rng, rho_e, rho_c, cells):
     return np.array([norm_cdf(v) for v in x])
 
 
+def _cities(bbox) -> list[dict]:
+    from ..data.cities import CITIES
+
+    lo0, la0, lo1, la1 = bbox
+    return [{"name": c[0], "state": c[1], "lat": c[2], "lon": c[3], "weight": c[4]}
+            for c in CITIES if la0 <= c[2] <= la1 and lo0 <= c[3] <= lo1]
+
+
 def _coverage_loss(tiv, cov, d):
     """GU loss for damage ratio array d (sites × times)."""
     cont = np.minimum(1.0, cov[:, 0:1] * d ** cov[:, 1:2])
@@ -234,7 +242,7 @@ def develop_tc(cat: EventCatalog, name: str, portfolio: Portfolio | None, seed: 
                 "lat0": float(sres["lat"][0]), "lon0": float(sres["lon"][0]),
                 "dlat": float(sres["lat"][1] - sres["lat"][0]) * sub, "dlon": float(sres["lon"][1] - sres["lon"][0]) * sub,
                 "ny": int(fr.shape[1]), "nx": int(fr.shape[2]), "t": sres["frame_t"].round(3).tolist(),
-                "frames_cm": b64(fr, "int16", 100.0),
+                "frames_cm": b64(fr, "int16", 100.0), "z": b64(sres["z"][::sub, ::sub], "int16", 1.0),
                 "max": {"lat0": float(sres["lat"][0]), "lon0": float(sres["lon"][0]),
                         "dlat": float(sres["lat"][1] - sres["lat"][0]), "dlon": float(sres["lon"][1] - sres["lon"][0]),
                         "ny": int(sres["z"].shape[0]), "nx": int(sres["z"].shape[1]),
@@ -282,11 +290,13 @@ def develop_tc(cat: EventCatalog, name: str, portfolio: Portfolio | None, seed: 
             "n": int(idx.size), "loc_id": L["loc_id"].tolist(), "lat": site_lat.round(5).tolist(),
             "lon": site_lon.round(5).tolist(), "tiv": tiv.sum(axis=1).round(0).tolist(),
             "construction": L["construction"].tolist(), "occupancy": L["occupancy"].tolist(),
+            "elev": elevation(site_lat, site_lon, fill=0.0).round(1).tolist(),
             "gust": b64(gust, "int16", 10.0), "damage": b64(d_tot, "int16", 1000.0),
             "surge_depth": b64(depth_frames if depth_frames is not None else np.zeros_like(d_tot), "int16", 100.0),
         }
     out["sites"] = sites_payload
     out["loss"] = loss
+    out["cities"] = _cities(out["bbox"])
     out["stats"] = {
         "vmax_landfall": float(np.interp(0.0, tt, tvmax)), "min_pressure_hpa": float(1013.0 - tdp.max() / 100.0),
         "peak_surge_m": out.get("surge", {}).get("peak_m"), "max_rain_mm": out.get("rain", {}).get("max_mm"),
@@ -374,12 +384,14 @@ def develop_eq(cat: EventCatalog, name: str, portfolio: Portfolio | None, seed: 
             sites_payload = {"n": int(idx.size), "loc_id": L["loc_id"].tolist(), "lat": slat.round(5).tolist(),
                              "lon": slon.round(5).tolist(), "tiv": tiv.sum(axis=1).round(0).tolist(),
                              "vs30": L["vs30"].round(0).tolist(), "construction": L["construction"].tolist(),
+                             "elev": elevation(slat, slon, fill=0.0).round(1).tolist(),
                              "pga": np.round(pga_s, 4).tolist(), "pga_median": np.round(med_s, 4).tolist(),
                              "t_p": np.round(sp, 2).tolist(), "t_s": np.round(ss, 2).tolist(),
                              "t_peak": np.round(sm, 2).tolist(), "damage": np.round(d, 4).tolist(),
                              "gu": np.round(gu, 0).tolist()}
     out["sites"] = sites_payload
     out["loss"] = loss
+    out["cities"] = _cities(out["bbox"])
     out["stats"] = {"Mw": M, "M0": fault["M0"], "rupture_duration_s": fault["duration"],
                     "max_pga_g": float(pga.max()), "final_gu": loss["gu"][-1] if loss else None,
                     "n_sites": sites_payload["n"] if sites_payload else 0}

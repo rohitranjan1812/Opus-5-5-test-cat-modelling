@@ -133,3 +133,12 @@ def test_event_development_endpoints(client, ids):
     assert client.post("/api/develop/seismogram", json={"analog": "andrew_1992", "lat": 25, "lon": -80}).status_code == 422
     tile = client.get("/api/terrain/7/34/53.png")
     assert tile.status_code == 200 and tile.content[:4] == b"\x89PNG"
+
+
+def test_sdk_development(client, ids):
+    cf = CatForgeClient(client=client)
+    dev = cf.develop(portfolio_id=ids["pid"], analog="northridge_1994", seed=3)
+    pga = cf.decode(dev["grid"]["pga"])
+    assert pga.shape == (dev["grid"]["ny"], dev["grid"]["nx"]) and abs(pga.max() - dev["stats"]["max_pga_g"]) < 1e-3
+    sg = cf.seismogram(34.2, -118.4, analog="northridge_1994")
+    assert sg["gmpe_lo_g"] < sg["gmpe_median_g"] < sg["gmpe_hi_g"]

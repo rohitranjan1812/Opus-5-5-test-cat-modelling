@@ -13,4 +13,5 @@ export default defineConfig({
     },
   },
   build: { outDir: 'dist', chunkSizeWarningLimit: 2000 },
+  worker: { format: 'es' },
 })

@@ -102,3 +102,15 @@ def test_stochastic_seismogram_consistent_with_gmpe(northridge):
     assert 0.33 < ratio < 3.0
     out = simulate_site(f, 34.20, -118.30, vs30=400.0, seed=0)
     assert out["t_p"] < out["t_s"] and out["pgv_cms"] > 0 and out["psa_g"].max() > out["pga_g"]
+
+
+def test_surge_site_depth_is_subgrid_and_starts_dry():
+    """Buildings whose coarse cell is sea must not start flooded; coastal ones flood, inland ones stay dry."""
+    cat = build_event("TC", ANALOGS["ian_2022"]["params"])
+    lat = np.array([26.45, 26.64, 28.54])  # Fort Myers Beach, Fort Myers, Orlando
+    lon = np.array([-81.95, -81.87, -81.38])
+    res = run_surge(track_arrays(cat), -24.0, 12.0, sites_lat=lat, sites_lon=lon)
+    d = res["site_depth_frames"]
+    assert d.shape[0] == 3 and np.all(d[:, 0] == 0.0)
+    assert res["site_depth_max"][0] > 1.0
+    assert res["site_depth_max"][2] == 0.0

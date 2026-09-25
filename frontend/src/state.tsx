@@ -4,7 +4,7 @@ import { api } from './api'
 import type { AnalysisBrief, Job, Meta, PortfolioBrief } from './api'
 import type { Mode } from './theme'
 
-export type Page = 'overview' | 'exposure' | 'hazard' | 'run' | 'results' | 'reinsurance' | 'risklab' | 'scenarios' | 'api'
+export type Page = 'overview' | 'exposure' | 'hazard' | 'run' | 'results' | 'reinsurance' | 'risklab' | 'scenarios' | 'develop' | 'api'
 
 interface AppState {
   mode: Mode
@@ -27,7 +27,7 @@ const Ctx = createContext<AppState | null>(null)
 
 function readPage(): Page {
   const h = window.location.hash.replace(/^#\/?/, '')
-  const valid: Page[] = ['overview', 'exposure', 'hazard', 'run', 'results', 'reinsurance', 'risklab', 'scenarios', 'api']
+  const valid: Page[] = ['overview', 'exposure', 'hazard', 'run', 'results', 'reinsurance', 'risklab', 'scenarios', 'develop', 'api']
   return (valid.includes(h as Page) ? h : 'overview') as Page
 }
 

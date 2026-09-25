@@ -26,6 +26,14 @@ export const BLUE = ['#cde2fb', '#b7d3f6', '#9ec5f4', '#86b6ef', '#6da7ec', '#55
   '#1c5cab', '#184f95', '#104281', '#0d366b']
 /** Semantic heat ramp (analogous yellow→red) for hazard intensity — always shown with a scale legend. */
 export const HEAT = ['#fff2b2', '#fde08a', '#f9c75b', '#f3a93a', '#eb8a2f', '#e0692c', '#cf4a2f', '#b3302f', '#8c1f2c']
+/** Accumulated rainfall (light green → deep teal). */
+export const RAIN = ['#e5f5e0', '#c7e9c0', '#a1d99b', '#74c476', '#41ab5d', '#238b45', '#1b7a6e', '#16607a', '#0f4868']
+/** Building damage ratio (pink → deep magenta): distinct from hazard heat and water blues on the 3-D map. */
+export const DAMAGE = ['#fde0ef', '#f7c3de', '#f1a1ca', '#e377ae', '#d44f94', '#c51b7d', '#a5116a', '#8e0152']
+/** Coseismic slip on the fault plane (lavender → deep violet). */
+export const SLIP = ['#efedf5', '#dadaeb', '#bcbddc', '#9e9ac8', '#807dba', '#6a51a3', '#54278f', '#3f007d']
+/** Water level / inundation depth (pale cyan → deep blue). */
+export const WATER = ['#d7f5fb', '#aee8f5', '#7fd3ee', '#4fb8e3', '#2a96d4', '#1a74bd', '#15559e', '#0f3b7a']
 
 function hexToRgb(h: string): [number, number, number] {
   const v = parseInt(h.slice(1), 16)
