@@ -1,12 +1,15 @@
 """Earthquake hazard: fault & area sources, truncated Gutenberg-Richter recurrence, finite ruptures,
 and a Boore & Atkinson (2008)-form ground-motion model for PGA with linear+nonlinear site terms.
 
-Rupture length scaling: Wells & Coppersmith (1994) (crustal, all slip types),
-Strasser et al. (2010) (subduction interface).  Distances: Joyner-Boore distance to the rupture
-trace, combined with a source pseudo-depth h:  R = sqrt(Rjb² + h²).
+Rupture size scaling: Wells & Coppersmith (1994) (crustal, all slip types) for length and down-dip
+width, Strasser et al. (2010) for the subduction interface; width is capped by the seismogenic
+thickness, W ≤ (z_bot − z_tor)/sin δ.  Each rupture is a (possibly dipping) planar surface whose
+*surface projection polygon* is stored; the Joyner–Boore distance is the distance to that polygon
+(zero for hanging-wall sites above the rupture), combined with a pseudo-depth h:
+R = sqrt(Rjb² + h²).
 
 Aleatory variability is split into inter-event τ (sampled per occurrence) and intra-event φ
-(folded into vulnerability and correlated spatially through the loss-engine copula).
+(an exponential-correlation random field, Jayaram & Baker 2009, sampled by the loss engine).
 """
 
 from __future__ import annotations
@@ -38,6 +41,44 @@ def rupture_length_km(m, kind: str = "crustal"):
     if kind == "subduction":
         return 10 ** (-2.477 + 0.585 * m)
     return 10 ** (-3.22 + 0.69 * m)
+
+
+def rupture_width_km(m, kind: str = "crustal"):
+    m = np.asarray(m, float)
+    if kind == "subduction":
+        return 10 ** (-0.882 + 0.351 * m)
+    return 10 ** (-1.01 + 0.32 * m)
+
+
+def plane_polygon(tlat, tlon, dip: float, ztor: float, width: float):
+    """Surface projection of a planar rupture below a trace (right-hand rule: dips to the right).
+
+    Returns the closed ring (top edge in trace order, then bottom edge reversed) and the local dip
+    azimuth at each trace vertex.
+    """
+    tlat = np.asarray(tlat, float)
+    tlon = np.asarray(tlon, float)
+    n = tlat.size
+    brg = np.zeros(n)
+    if n >= 2:
+        from ..geo import initial_bearing
+
+        seg = initial_bearing(tlat[:-1], tlon[:-1], tlat[1:], tlon[1:])
+        brg[0], brg[-1] = seg[0], seg[-1]
+        for i in range(1, n - 1):  # average of adjacent strikes (circular mean)
+            a, b = np.radians(seg[i - 1]), np.radians(seg[i])
+            brg[i] = np.degrees(np.arctan2(np.sin(a) + np.sin(b), np.cos(a) + np.cos(b)))
+    dipdir = (brg + 90.0) % 360.0
+    if dip >= 89.9:
+        top_la, top_lo, bot_la, bot_lo = tlat, tlon, tlat, tlon
+    else:
+        t = math.tan(math.radians(dip))
+        top_la, top_lo = destination(tlat, tlon, dipdir, np.full(n, ztor / t))
+        zb = ztor + width * math.sin(math.radians(dip))
+        bot_la, bot_lo = destination(tlat, tlon, dipdir, np.full(n, zb / t))
+    ring_la = np.concatenate([top_la, bot_la[::-1]])
+    ring_lo = np.concatenate([top_lo, bot_lo[::-1]])
+    return ring_la, ring_lo, dipdir
 
 
 def gr_bin_rates(mmin, mmax, rate, b, dm):
@@ -87,31 +128,41 @@ def _sub_trace(line: Polyline, s0: float, s1: float):
 def generate_eq_catalog(seed: int = 7, fault_dm: float = 0.1, area_dm: float = 0.2, max_fault_positions: int = 14,
                         area_position_density: float = 1.0) -> EventCatalog:
     rng = np.random.default_rng(seed)
-    rows, rup_lat, rup_lon, ptr = [], [], [], [0]
+    rows = []
+    geo = {"ptr": [0], "lat": [], "lon": [], "tptr": [0], "tlat": [], "tlon": []}
 
-    def add(src, kind, region, m, rate, lats, lons, h, strike, length):
+    def add(src, kind, region, m, rate, lats, lons, h, strike, length, dip, ztor, width, mech):
         rows.append({"source": src, "source_type": kind, "region": region, "mag": round(float(m), 3),
                      "rate": float(rate), "lat": float(np.mean(lats)), "lon": float(np.mean(lons)),
                      "strike": float(strike), "length_km": float(length), "depth_h": float(h),
+                     "dip": float(dip), "ztor": float(ztor), "width_km": float(width), "mech": mech,
                      "anelastic": 0.3 if region in CEUS_REGIONS else (0.6 if kind == "subduction" else 1.0)})
-        rup_lat.extend(lats)
-        rup_lon.extend(lons)
-        ptr.append(ptr[-1] + len(lats))
+        rla, rlo, _ = plane_polygon(lats, lons, dip, ztor, width)
+        geo["lat"].extend(rla.tolist())
+        geo["lon"].extend(rlo.tolist())
+        geo["ptr"].append(geo["ptr"][-1] + rla.size)
+        geo["tlat"].extend(lats)
+        geo["tlon"].extend(lons)
+        geo["tptr"].append(geo["tptr"][-1] + len(lats))
 
     for f in FAULTS:
         tr = np.array(f["trace"])
         line = Polyline(tr[:, 0], tr[:, 1])
-        kind = "subduction" if "Subduction" in f["name"] else "fault"
+        kind = "subduction" if f.get("mech") == "SUB" else "fault"
+        dip, ztor, zbot = f.get("dip", 90.0), f.get("ztor", 0.0), f.get("zbot", 15.0)
+        wmax = (zbot - ztor) / math.sin(math.radians(dip))
         mags, brates = gr_bin_rates(f["mmin"], f["mmax"], f["rate"], f["b"], fault_dm)
         for m, br in zip(mags, brates):
             L = float(min(rupture_length_km(m, kind), line.length_km))
+            W = float(min(rupture_width_km(m, kind), wmax))
             span = line.length_km - L
             npos = 1 if span < 1.0 else int(np.clip(round(line.length_km / (0.5 * L)), 2, max_fault_positions))
             starts = [0.0] if npos == 1 else np.linspace(0, span, npos) + rng.uniform(-0.3, 0.3, npos) * span / npos
             for s0 in np.clip(starts, 0, max(span, 0)):
                 lats, lons = _sub_trace(line, float(s0), float(s0) + L)
                 strike = float(line.bearing_at(s0 + 0.5 * L))
-                add(f["name"], kind, f["region"], m, br / npos, lats, lons, f["h"], strike, L)
+                add(f["name"], kind, f["region"], m, br / npos, lats, lons, f["h"], strike, L, dip, ztor, W,
+                    f.get("mech", "SS"))
 
     for a in AREAS:
         lo0, la0, lo1, la1 = a["bbox"]
@@ -123,6 +174,8 @@ def generate_eq_catalog(seed: int = 7, fault_dm: float = 0.1, area_dm: float = 0
             # stratified (Latin-hypercube) epicentres
             ux = (rng.permutation(npos) + rng.random(npos)) / npos
             uy = (rng.permutation(npos) + rng.random(npos)) / npos
+            W = float(min(rupture_width_km(m), 15.0))
+            ztor = max(0.0, 8.0 - 0.5 * W)
             for x, y in zip(ux, uy):
                 clat, clon = la0 + y * (la1 - la0), lo0 + x * (lo1 - lo0)
                 L = float(rupture_length_km(m)) if m >= 5.5 else 1.0
@@ -130,41 +183,50 @@ def generate_eq_catalog(seed: int = 7, fault_dm: float = 0.1, area_dm: float = 0
                 p_lat, p_lon = destination(np.array([clat, clat]), np.array([clon, clon]),
                                            np.array([strike, strike + 180.0]), np.array([L / 2, L / 2]))
                 add(a["name"], "area", a["region"], m, br / npos, [float(p_lat[1]), float(p_lat[0])],
-                    [float(p_lon[1]), float(p_lon[0])], a["h"], strike, L)
+                    [float(p_lon[1]), float(p_lon[0])], a["h"], strike, L, 90.0, ztor, W, "SS")
 
     events = pd.DataFrame(rows)
     events.insert(0, "event_id", np.arange(1, len(events) + 1, dtype=np.int64) + 1_000_000)
     events["name"] = [f"EQ-{i - 1_000_000:05d} M{m:.1f} {s}" for i, m, s in
                       zip(events["event_id"], events["mag"], events["source"])]
-    geometry = {"ptr": np.asarray(ptr, np.int64), "lat": np.asarray(rup_lat, float), "lon": np.asarray(rup_lon, float)}
+    geometry = {k: np.asarray(v, np.int64 if k.endswith("ptr") else float) for k, v in geo.items()}
     return EventCatalog(
         peril="EQ", events=events, geometry=geometry, frequency=FrequencyModel(),
         uncertainty=EQ_UNCERTAINTY,
         intensity_unit="g (PGA)",
         meta={"seed": seed, "gmpe": "BA08-form (illustrative coefficients)", "n_faults": len(FAULTS),
-              "n_areas": len(AREAS)},
+              "n_areas": len(AREAS), "distance": "Rjb to rupture surface projection"},
     )
 
 
 def single_rupture(lat: float, lon: float, mag: float, strike: float = 0.0, depth_h: float = 6.0,
                    length_km: float | None = None, region: str = "scenario", trace=None,
-                   event_id: int = 1_000_001, name: str = "scenario") -> EventCatalog:
+                   event_id: int = 1_000_001, name: str = "scenario", dip: float = 90.0, ztor: float = 0.0,
+                   width_km: float | None = None, zbot: float = 15.0, mech: str = "SS",
+                   hypo_depth_km: float | None = None, hypo_along: float | None = None) -> EventCatalog:
     """One-event EQ catalog. Either an explicit trace [(lon, lat), ...] or a centred straight rupture."""
+    kind = "subduction" if mech == "SUB" else "crustal"
     if trace is not None:
         lons = [p[0] for p in trace]
         lats = [p[1] for p in trace]
         L = Polyline(np.array(lons), np.array(lats)).length_km
+        strike = float(Polyline(np.array(lons), np.array(lats)).seg_bearing[0])
     else:
-        L = float(length_km or (rupture_length_km(mag) if mag >= 5.5 else 1.0))
+        L = float(length_km or (rupture_length_km(mag, kind) if mag >= 5.5 else 1.0))
         p_lat, p_lon = destination(np.array([lat, lat]), np.array([lon, lon]), np.array([strike, strike + 180.0]),
                                    np.array([L / 2, L / 2]))
         lats, lons = [float(p_lat[1]), float(p_lat[0])], [float(p_lon[1]), float(p_lon[0])]
+    W = float(width_km or min(rupture_width_km(mag, kind), (zbot - ztor) / math.sin(math.radians(dip))))
+    rla, rlo, _ = plane_polygon(lats, lons, dip, ztor, W)
     events = pd.DataFrame([{
         "event_id": event_id, "source": name, "source_type": "scenario", "region": region, "mag": mag,
         "rate": 1.0, "lat": float(np.mean(lats)), "lon": float(np.mean(lons)), "strike": strike, "length_km": L,
-        "depth_h": depth_h, "anelastic": 0.3 if region in CEUS_REGIONS else 1.0, "name": name}])
-    geometry = {"ptr": np.array([0, len(lats)], np.int64), "lat": np.asarray(lats, float),
-                "lon": np.asarray(lons, float)}
+        "depth_h": depth_h, "dip": dip, "ztor": ztor, "width_km": W, "mech": mech,
+        "hypo_depth_km": hypo_depth_km, "hypo_along": hypo_along,
+        "anelastic": 0.3 if region in CEUS_REGIONS else (0.6 if mech == "SUB" else 1.0), "name": name}])
+    geometry = {"ptr": np.array([0, rla.size], np.int64), "lat": rla, "lon": rlo,
+                "tptr": np.array([0, len(lats)], np.int64), "tlat": np.asarray(lats, float),
+                "tlon": np.asarray(lons, float)}
     return EventCatalog(peril="EQ", events=events, geometry=geometry, frequency=FrequencyModel(),
                         uncertainty=EQ_UNCERTAINTY, intensity_unit="g (PGA)",
                         meta={"scenario": True})
@@ -179,6 +241,28 @@ def _cutoff_km(m, h, anelastic, ln_min):
             return r
         r += 5.0
     return 800.0
+
+
+@nb.njit(inline="always", cache=True)
+def _ring_rjb(px, py, rlat, rlon, a, z, lat0, lon0):
+    """Joyner–Boore distance: 0 inside the rupture's surface projection, else distance to its ring."""
+    n = z - a
+    if n == 1:
+        ax, ay = local_xy_km(rlat[a], rlon[a], lat0, lon0)
+        return math.sqrt((px - ax) ** 2 + (py - ay) ** 2)
+    dmin = 1e9
+    inside = False
+    for k in range(n):
+        i0 = a + k
+        i1 = a + (k + 1) % n
+        ax, ay = local_xy_km(rlat[i0], rlon[i0], lat0, lon0)
+        bx, by = local_xy_km(rlat[i1], rlon[i1], lat0, lon0)
+        d = point_segment_dist(px, py, ax, ay, bx, by)
+        if d < dmin:
+            dmin = d
+        if ((ay > py) != (by > py)) and (px < (bx - ax) * (py - ay) / (by - ay + 1e-300) + ax):
+            inside = not inside
+    return 0.0 if inside else dmin
 
 
 @nb.njit(parallel=True, cache=True)
@@ -213,16 +297,7 @@ def eq_footprint_dense(ev_idx, ptr, rlat, rlon, mag, depth, anel, slat, slon, sv
                 for p in range(cell_ptr[c], cell_ptr[c + 1]):
                     s = cell_items[p]
                     px, py = local_xy_km(slat[s], slon[s], lat0, lon0)
-                    dmin = 1e9
-                    if z - a == 1:
-                        ax, ay = local_xy_km(rlat[a], rlon[a], lat0, lon0)
-                        dmin = math.sqrt((px - ax) ** 2 + (py - ay) ** 2)
-                    for k in range(a, z - 1):
-                        ax, ay = local_xy_km(rlat[k], rlon[k], lat0, lon0)
-                        bx, by = local_xy_km(rlat[k + 1], rlon[k + 1], lat0, lon0)
-                        d = point_segment_dist(px, py, ax, ay, bx, by)
-                        if d < dmin:
-                            dmin = d
+                    dmin = _ring_rjb(px, py, rlat, rlon, a, z, lat0, lon0)
                     if dmin > rcut:
                         continue
                     lp = ln_pga_median(m, dmin, depth[e], svs30[s], anel[e])
@@ -239,6 +314,14 @@ def eq_kernel_args(cat: EventCatalog):
 
 
 def rupture_of(cat: EventCatalog, event_index: int) -> dict:
+    """Surface-projection ring (closed) of the rupture plus its top trace."""
     g = cat.geometry
     a, z = int(g["ptr"][event_index]), int(g["ptr"][event_index + 1])
-    return {"lat": np.round(g["lat"][a:z], 4).tolist(), "lon": np.round(g["lon"][a:z], 4).tolist()}
+    lat = np.round(g["lat"][a:z], 4).tolist()
+    lon = np.round(g["lon"][a:z], 4).tolist()
+    out = {"lat": lat + lat[:1], "lon": lon + lon[:1]}
+    if "tptr" in g:
+        ta, tz = int(g["tptr"][event_index]), int(g["tptr"][event_index + 1])
+        out["trace_lat"] = np.round(g["tlat"][ta:tz], 4).tolist()
+        out["trace_lon"] = np.round(g["tlon"][ta:tz], 4).tolist()
+    return out

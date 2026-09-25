@@ -17,7 +17,8 @@ Event generation (per synthetic landfall)
 Wind field (per track point, per site)
 --------------------------------------
 Holland (1980) radial profile evaluated at the surface with B_s (Holland 2008) and a Coriolis
-correction, 20° inflow, and a translational asymmetry scaled by the radial profile; the site's 3-second gust is  K_terrain · |V_surface|.
+correction, the Sobey et al. (1977) radius-dependent inflow angle (10° → 25°), and a
+translational asymmetry scaled by the radial profile; the site's 3-second gust is  K_terrain · |V_surface|.
 Footprint = maximum gust over the storm's lifetime, evaluated hourly then refined at 7.5-minute
 sub-steps around the peak.
 """
@@ -39,7 +40,6 @@ E = math.e
 OMEGA = 7.292e-5
 SURFACE_FACTOR = 1.0  # profile is evaluated at surface level (Holland 2008 B_s)
 ASYM_FACTOR = 0.55
-INFLOW_DEG = 20.0
 KD_ALPHA = 0.095  # 1/h   Kaplan-DeMaria decay rate
 KD_VB = 13.75  # m/s  background wind
 HURRICANE_VMIN = 33.0
@@ -301,7 +301,22 @@ def single_track(landfall_lat: float, landfall_lon: float, heading: float, vmax:
 # ----------------------------------------------------------------------------------------------
 
 @nb.njit(inline="always", cache=True)
-def _gust(slat, slon, clat, clon, dp, rm, bh, hdg, vt, kfac):
+def inflow_deg(r_over_rm):
+    """Sobey, Harper & Stark (1977) inflow-angle profile: 10° inside Rmax → 25° beyond 1.2 Rmax."""
+    if r_over_rm < 1.0:
+        return 10.0
+    if r_over_rm < 1.2:
+        return 10.0 + 75.0 * (r_over_rm - 1.0)
+    return 25.0
+
+
+@nb.njit(inline="always", cache=True)
+def wind_uv(slat, slon, clat, clon, dp, rm, bh, hdg, vt):
+    """Surface (10 m, 1-min, marine) wind vector (east, north) in m/s at a site.
+
+    Holland profile with B_s and Coriolis, cyclonic rotation with the Sobey inflow profile, plus
+    the translational asymmetry 0.55·Vt scaled by the normalised radial profile.
+    """
     x, y = local_xy_km(slat, slon, clat, clon)
     r = math.sqrt(x * x + y * y)
     if r < 0.5:
@@ -311,10 +326,10 @@ def _gust(slat, slon, clat, clon, dp, rm, bh, hdg, vt, kfac):
     rf = r * 1000.0 * f * 0.5
     vg = math.sqrt(bh * dp / RHO_AIR * rr * math.exp(-rr) + rf * rf) - rf
     vs = SURFACE_FACTOR * vg
-    vgm = math.sqrt(bh * dp / (RHO_AIR * E))
-    vsm = SURFACE_FACTOR * vgm
-    cb = math.cos(INFLOW_DEG * DEG2RAD)
-    sb = math.sin(INFLOW_DEG * DEG2RAD)
+    vsm = SURFACE_FACTOR * math.sqrt(bh * dp / (RHO_AIR * E))
+    beta = inflow_deg(r / rm) * DEG2RAD
+    cb = math.cos(beta)
+    sb = math.sin(beta)
     ux = x / r
     uy = y / r
     wx = vs * (cb * (-uy) - sb * ux)
@@ -322,6 +337,20 @@ def _gust(slat, slon, clat, clon, dp, rm, bh, hdg, vt, kfac):
     sc = ASYM_FACTOR * vs / max(vsm, 1.0)
     wx += sc * vt * math.sin(hdg * DEG2RAD)
     wy += sc * vt * math.cos(hdg * DEG2RAD)
+    return wx, wy
+
+
+@nb.njit(inline="always", cache=True)
+def pressure_deficit(slat, slon, clat, clon, dp, rm, bh):
+    """p_env − p(r) (Pa) for the Holland pressure profile p(r) = p_c + Δp exp(−(Rm/r)^B)."""
+    x, y = local_xy_km(slat, slon, clat, clon)
+    r = max(math.sqrt(x * x + y * y), 0.5)
+    return dp * (1.0 - math.exp(-((rm / r) ** bh)))
+
+
+@nb.njit(inline="always", cache=True)
+def _gust(slat, slon, clat, clon, dp, rm, bh, hdg, vt, kfac):
+    wx, wy = wind_uv(slat, slon, clat, clon, dp, rm, bh, hdg, vt)
     return kfac * math.sqrt(wx * wx + wy * wy)
 
 

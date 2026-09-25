@@ -1,6 +1,7 @@
 import math
 
 import numpy as np
+import pytest
 
 from catforge.data.coast import REGIONS
 from catforge.hazard import Sites, compute_pairs, hazard_curve, single_rupture, single_track
@@ -71,3 +72,28 @@ def test_intensity_reweighting_is_normalised(small_model):
     up = intensity_rate_multiplier(ev, 1.1)
     strong = (ev.vmax > 65).to_numpy()
     assert up[strong].mean() > 1.0
+
+
+def test_sobey_inflow_profile():
+    from catforge.hazard.tropical_cyclone import inflow_deg
+
+    assert inflow_deg(0.5) == 10.0 and inflow_deg(1.1) == pytest.approx(17.5) and inflow_deg(2.0) == 25.0
+
+
+def test_dipping_rupture_hanging_wall_and_rjb():
+    from catforge.geo import destination
+    from catforge.hazard.earthquake import plane_polygon
+
+    # a 40°-dipping thrust: its surface projection extends ~W cos(dip) down-dip of the trace
+    ring_la, ring_lo, dipdir = plane_polygon([34.2, 34.3], [-118.6, -118.4], 40.0, 5.0, 20.0)
+    assert ring_la.size == 4
+    r = single_rupture(34.2, -118.54, 6.7, strike=122, dip=40, ztor=5, depth_h=6)
+    hw = destination(34.2, -118.54, 212, 10.0)
+    fw = destination(34.2, -118.54, 32, 10.0)
+    p = compute_pairs(r, Sites.plain([hw[0], fw[0]], [hw[1], fw[1]]), min_intensity=0.001)
+    pga = np.exp(p.log_i)[np.argsort(p.site)]
+    assert pga[0] > 1.3 * pga[1]  # hanging wall (Rjb = 0) shakes harder than the footwall mirror site
+    v = single_rupture(34.2, -118.54, 6.7, strike=122, dip=90)
+    pv = compute_pairs(v, Sites.plain([hw[0], fw[0]], [hw[1], fw[1]]), min_intensity=0.001)
+    pv = np.exp(pv.log_i)[np.argsort(pv.site)]
+    assert pv[0] == pytest.approx(pv[1], rel=0.02)  # vertical fault: symmetric

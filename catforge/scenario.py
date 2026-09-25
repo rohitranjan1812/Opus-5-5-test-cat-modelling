@@ -53,21 +53,26 @@ ANALOGS: dict[str, dict] = {
                          "params": {"landfall_lat": 25.77, "landfall_lon": -80.13, "heading": 285, "vmax": 64,
                                     "rmax_km": 25, "vt": 5.5}},
     "northridge_1994": {"label": "Northridge 1994 (analog) — M6.7 blind thrust", "peril": "EQ",
-                        "params": {"lat": 34.21, "lon": -118.54, "mag": 6.7, "strike": 122, "depth_h": 6.0}},
+                        "params": {"lat": 34.28, "lon": -118.56, "mag": 6.7, "strike": 122, "dip": 40, "ztor": 5.0,
+                                   "zbot": 21.0, "depth_h": 6.0, "mech": "RV", "hypo_depth_km": 17.5,
+                                   "hypo_along": 0.55}},
     "loma_prieta_1989": {"label": "Loma Prieta 1989 (analog) — M6.9", "peril": "EQ",
-                         "params": {"lat": 37.04, "lon": -121.88, "mag": 6.9, "strike": 128, "depth_h": 8.0}},
+                         "params": {"lat": 37.04, "lon": -121.88, "mag": 6.9, "strike": 128, "dip": 70, "ztor": 3.0,
+                                    "zbot": 18.0, "depth_h": 8.0, "mech": "RV", "hypo_depth_km": 17.0,
+                                    "hypo_along": 0.5}},
     "sf_1906": {"label": "San Francisco 1906 (analog) — M7.9 San Andreas North", "peril": "EQ",
                 "params": {"mag": 7.9, "trace": _fault("San Andreas (North)")["trace"], "depth_h": 4.5,
-                           "lat": 37.7, "lon": -122.5}},
+                           "lat": 37.7, "lon": -122.5, "zbot": 12.0, "hypo_along": 0.2, "hypo_depth_km": 8.0}},
     "shakeout_m78": {"label": "ShakeOut M7.8 southern San Andreas (scenario)", "peril": "EQ",
                      "params": {"mag": 7.8, "trace": _fault("San Andreas (South)")["trace"][:5], "depth_h": 4.5,
-                                "lat": 34.2, "lon": -117.4}},
+                                "lat": 34.2, "lon": -117.4, "hypo_along": 0.02, "hypo_depth_km": 10.0}},
     "haywired_m70": {"label": "HayWired M7.0 Hayward fault (scenario)", "peril": "EQ",
                      "params": {"mag": 7.0, "trace": _fault("Hayward-Rodgers Creek")["trace"][:3], "depth_h": 4.5,
                                 "lat": 37.75, "lon": -122.1}},
     "cascadia_m90": {"label": "Cascadia M9.0 full-margin rupture (scenario)", "peril": "EQ",
                      "params": {"mag": 9.0, "trace": _fault("Cascadia Subduction Zone")["trace"], "depth_h": 20.0,
-                                "lat": 45.0, "lon": -124.0, "region": "Pacific Northwest"}},
+                                "lat": 45.0, "lon": -124.5, "region": "Pacific Northwest", "dip": 11.0, "ztor": 5.0,
+                                "zbot": 30.0, "mech": "SUB", "hypo_along": 0.15, "hypo_depth_km": 20.0}},
     "new_madrid_m75": {"label": "New Madrid M7.5 (scenario)", "peril": "EQ",
                        "params": {"mag": 7.5, "trace": _fault("New Madrid")["trace"], "depth_h": 6.0, "lat": 36.3,
                                   "lon": -89.6, "region": "Central US"}},
@@ -86,7 +91,10 @@ def build_event(peril: str, params: dict):
     if peril == "EQ":
         return single_rupture(p.get("lat", 0.0), p.get("lon", 0.0), p["mag"], p.get("strike", 0.0), p.get("depth_h", 6.0),
                               p.get("length_km"), p.get("region", "scenario"), trace=p.get("trace"),
-                              name=p.get("name", "scenario"))
+                              name=p.get("name", "scenario"), dip=float(p.get("dip", 90.0)),
+                              ztor=float(p.get("ztor", 0.0)), width_km=p.get("width_km"),
+                              zbot=float(p.get("zbot", 15.0)), mech=p.get("mech", "SS"),
+                              hypo_depth_km=p.get("hypo_depth_km"), hypo_along=p.get("hypo_along"))
     raise ValueError(f"unknown peril {peril}")
 
 
