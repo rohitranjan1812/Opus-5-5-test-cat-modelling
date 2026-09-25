@@ -118,3 +118,18 @@ def test_sdk_client(client, ids):
     an = cf.run_analysis(ids["pid"], n_years=500, elt_samples=4, perils=["TC"])
     assert an["aal"]["gross"] >= 0 and an["config"]["perils"] == ["TC"]
     assert cf.allocation(an["id"], "state")["rows"]
+
+
+def test_event_development_endpoints(client, ids):
+    tc = client.post("/api/develop", params={"wait": True}, json={"portfolio_id": ids["pid"], "analog": "andrew_1992",
+                                                                  "seed": 2, "surge": False}).json()["result"]
+    assert tc["peril"] == "TC" and len(tc["track"]["t"]) > 10 and tc["probes"]
+    assert tc["rain"]["max_mm"] > 0 and tc["loss"]["gu"][-1] >= tc["loss"]["gu"][0]
+    eq = client.post("/api/develop", params={"wait": True}, json={"portfolio_id": ids["pid"], "analog": "northridge_1994",
+                                                                  "seed": 2}).json()["result"]
+    assert eq["peril"] == "EQ" and eq["fault"]["nL"] >= 2 and eq["grid"]["t_s"]["b64"]
+    sg = client.post("/api/develop/seismogram", json={"analog": "northridge_1994", "lat": 34.2, "lon": -118.4}).json()
+    assert sg["pga_g"] > 0 and len(sg["acc_g"]) == len(sg["vel_cms"]) and sg["t_p"] < sg["t_s"]
+    assert client.post("/api/develop/seismogram", json={"analog": "andrew_1992", "lat": 25, "lon": -80}).status_code == 422
+    tile = client.get("/api/terrain/7/34/53.png")
+    assert tile.status_code == 200 and tile.content[:4] == b"\x89PNG"

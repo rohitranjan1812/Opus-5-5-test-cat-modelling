@@ -45,11 +45,13 @@ from .schemas import (
     AnalysisRequest,
     CatalogRebuildRequest,
     ClimateRequest,
+    DevelopRequest,
     MarginalRequest,
     MitigationRequest,
     OptimizeRequest,
     ReinsuranceRequest,
     ScenarioRequest,
+    SeismogramRequest,
     SyntheticPortfolioRequest,
 )
 from .store import Job, Store
@@ -557,6 +559,47 @@ def create_app(model: CatModel | None = None, data_dir: str | None = None, demo:
             return run_scenario(pf, peril, params, req.n_samples, req.seed, base_model=store.model)
 
         return job_or_wait(store.submit("scenario", work), wait)
+
+    # ------------------------------------------------------------------ event development (4-D)
+    @app.post("/api/develop", tags=["development"])
+    def develop_event(req: DevelopRequest, wait: bool = False):
+        """Time-resolved physics of one event realization (wind/surge/rain or rupture/waves) + building damage."""
+        from ..physics.develop import develop
+
+        pf = get_pf(req.portfolio_id) if req.portfolio_id else None
+        if req.analog and req.analog not in ANALOGS:
+            raise HTTPException(422, f"unknown analog {req.analog}")
+
+        def work(job: Job):
+            job.message = "Simulating event development (surge model may take ~10 s)"
+            key = ("develop", req.portfolio_id, req.analog, req.peril, req.event_id, str(req.params), req.seed, req.surge)
+            return store.cached(key, lambda: clean(develop(store.model, pf, req.peril, req.analog, req.params,
+                                                           req.event_id, req.seed, req.surge)))
+
+        return job_or_wait(store.submit("develop", work), wait)
+
+    @app.post("/api/develop/seismogram", tags=["development"])
+    def develop_seismogram(req: SeismogramRequest):
+        """Stochastic finite-fault (EXSIM-style) accelerogram, velocity, FAS and PSA at a site."""
+        from ..physics.develop import resolve_event, seismogram
+
+        try:
+            peril, cat, _ = resolve_event(store.model, req.peril, req.analog, req.params, req.event_id)
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if peril != "EQ":
+            raise HTTPException(422, "seismograms are available for earthquake events")
+        cat.uncertainty = store.model.catalogs["EQ"].uncertainty
+        return J(seismogram(cat, req.lat, req.lon, req.vs30, req.seed))
+
+    @app.get("/api/terrain/{z}/{x}/{y}.png", tags=["development"], include_in_schema=False)
+    def terrain_tile(z: int, x: int, y: int):
+        from ..physics.dem import terrarium_tile
+
+        if z < 0 or z > 14 or not (0 <= x < 2 ** z and 0 <= y < 2 ** z):
+            raise HTTPException(404, "tile out of range")
+        return Response(terrarium_tile(z, x, y), media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
 
     # ------------------------------------------------------------------ jobs
     @app.get("/api/jobs", tags=["jobs"])

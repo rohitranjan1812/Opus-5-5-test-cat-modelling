@@ -111,3 +111,24 @@ class CatalogRebuildRequest(BaseModel):
     n_hurricanes: int | None = Field(None, ge=100, le=50000)
     n_tropical_storms: int | None = Field(None, ge=0, le=20000)
     area_position_density: float | None = Field(None, gt=0, le=10)
+
+
+class DevelopRequest(BaseModel):
+    portfolio_id: str | None = Field(None, description="Portfolio whose buildings are tracked through the event")
+    analog: str | None = Field(None, description="Historical analog key")
+    peril: Peril | None = None
+    event_id: int | None = Field(None, description="Stochastic catalog event id (with peril)")
+    params: dict | None = Field(None, description="Custom event parameters (with peril)")
+    seed: int = Field(1, description="Realization seed (hazard residual field, slip, damage uncertainty)")
+    surge: bool = Field(True, description="Run the 2-D storm-surge model (hurricanes)")
+
+
+class SeismogramRequest(BaseModel):
+    analog: str | None = None
+    peril: Peril | None = "EQ"
+    event_id: int | None = None
+    params: dict | None = None
+    seed: int = 1
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+    vs30: float = Field(400.0, ge=150, le=1500)

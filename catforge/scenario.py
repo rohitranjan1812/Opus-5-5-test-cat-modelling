@@ -54,7 +54,7 @@ ANALOGS: dict[str, dict] = {
                                     "rmax_km": 25, "vt": 5.5}},
     "northridge_1994": {"label": "Northridge 1994 (analog) — M6.7 blind thrust", "peril": "EQ",
                         "params": {"lat": 34.28, "lon": -118.56, "mag": 6.7, "strike": 122, "dip": 40, "ztor": 5.0,
-                                   "zbot": 21.0, "depth_h": 6.0, "mech": "RV", "hypo_depth_km": 17.5,
+                                   "zbot": 21.0, "width_km": 21.0, "depth_h": 6.0, "mech": "RV", "hypo_depth_km": 17.5,
                                    "hypo_along": 0.55}},
     "loma_prieta_1989": {"label": "Loma Prieta 1989 (analog) — M6.9", "peril": "EQ",
                          "params": {"lat": 37.04, "lon": -121.88, "mag": 6.9, "strike": 128, "dip": 70, "ztor": 3.0,
