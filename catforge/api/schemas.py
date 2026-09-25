@@ -141,3 +141,10 @@ class SeismogramRequest(BaseModel):
     lat: float = Field(..., ge=-90, le=90)
     lon: float = Field(..., ge=-180, le=180)
     vs30: float = Field(400.0, ge=150, le=1500)
+
+
+class EnrichRequest(BaseModel):
+    scope: Literal["coastal", "all"] = Field("coastal", description="coastal: within 30 km of the coast and below 20 m")
+    elevation: bool = Field(True, description="Building-scale ground elevation (USGS 3DEP terrain tiles)")
+    footprints: bool = Field(True, description="Match mapped OSM building footprints (area, height, storeys)")
+    max_snap_m: float = Field(35.0, gt=0, le=200)

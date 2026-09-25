@@ -165,7 +165,7 @@ def _step(eta, M, N, z, zc, dx, dxn, dy, fcor, taux, tauy, ib, nman, dt, active,
 
 
 def run_surge(tr, t_start: float, t_end: float, pad_deg: float = 2.5, dt: float = 30.0, forcing_every: int = 20,
-              frame_hours: float = 1.0, max_cells: int = 160_000, sites_lat=None, sites_lon=None):
+              frame_hours: float = 1.0, max_cells: int = 160_000, sites_lat=None, sites_lon=None, sites_ground=None):
     """Integrate the surge model along a track; returns frames, maxima and site water levels."""
     tt, tlat, tlon = tr[0], tr[1], tr[2]
     m = (tt >= t_start - 1) & (tt <= t_end + 1)
@@ -221,6 +221,9 @@ def run_surge(tr, t_start: float, t_end: float, pad_deg: float = 2.5, dt: float 
         sx = np.clip(np.tile(cx[:, None] + off[None, :], (1, 3)), 0, nx - 1)
         zs = np.maximum(elevation(np.asarray(sites_lat, float), np.asarray(sites_lon, float), fill=SITE_GROUND_MIN),
                         SITE_GROUND_MIN)
+        if sites_ground is not None:  # measured building ground (e.g. 3DEP) replaces the coarse-cell estimate
+            g = np.asarray(sites_ground, float)
+            zs = np.where(np.isfinite(g), g, zs)
 
     def site_depth(level, wet):
         ws = np.where(wet[sy, sx], level[sy, sx], -np.inf).max(axis=1)

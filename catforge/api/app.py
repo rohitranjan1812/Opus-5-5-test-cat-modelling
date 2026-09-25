@@ -46,6 +46,7 @@ from .schemas import (
     CatalogRebuildRequest,
     ClimateRequest,
     DevelopRequest,
+    EnrichRequest,
     MarginalRequest,
     MitigationRequest,
     OptimizeRequest,
@@ -87,7 +88,7 @@ def J(o, status: int = 200) -> JSONResponse:
 
 def create_app(model: CatModel | None = None, data_dir: str | None = None, demo: bool | None = None,
                demo_locations: int | None = None, demo_years: int | None = None,
-               google_maps_key: str | None = None, google_transport=None) -> FastAPI:
+               google_maps_key: str | None = None, google_transport=None, geodata_transport=None) -> FastAPI:
     data_dir = data_dir if data_dir is not None else os.environ.get("CATFORGE_DATA_DIR")
     demo = demo if demo is not None else os.environ.get("CATFORGE_DEMO", "1") != "0"
     demo_locations = demo_locations or int(os.environ.get("CATFORGE_DEMO_LOCATIONS", "5000"))
@@ -332,6 +333,56 @@ def create_app(model: CatModel | None = None, data_dir: str | None = None, demo:
         get_pf(pid)
         store.delete_portfolio(pid)
         return {"deleted": pid}
+
+    # ------------------------------------------------------------------ exposure enrichment (geodata)
+    from ..geodata.fetch import TileFetcher
+
+    fetcher = TileFetcher(cache_dir=(Path(data_dir) / "cache") if data_dir else None, transport=geodata_transport)
+    app.state.fetcher = fetcher
+
+    @app.post("/api/portfolios/{pid}/enrich", tags=["exposure"])
+    def enrich(pid: str, req: EnrichRequest, wait: bool = False):
+        """Building-scale ground elevation + mapped-footprint attributes → a new, enriched portfolio."""
+        from ..geodata.enrich import enrich_portfolio
+
+        pf = get_pf(pid)
+
+        def work(job: Job):
+            def progress(f, msg):
+                job.progress, job.message = f, msg
+
+            new, report = enrich_portfolio(pf, scope=req.scope, with_elevation=req.elevation,
+                                           with_footprints=req.footprints, fetcher=fetcher,
+                                           max_snap_m=req.max_snap_m, progress=progress)
+            store.add_portfolio(new)
+            job.result_id = new.id
+            return clean({"portfolio": new.summary(), "report": report})
+
+        return job_or_wait(store.submit("enrich", work), wait)
+
+    @app.get("/api/portfolios/{pid}/quality", tags=["exposure"])
+    def quality(pid: str, limit: int = Query(500, ge=1, le=100_000)):
+        """Enrichment report and per-location QA (footprint match, snap, ground elevation vs the 2′ DEM)."""
+        pf = get_pf(pid)
+        if "enrichment" not in pf.meta:
+            raise HTTPException(404, "portfolio has not been enriched (POST /api/portfolios/{id}/enrich)")
+        q = pf.meta.get("quality", {})
+        return J(clean({"report": pf.meta["enrichment"], "enriched_from": pf.meta.get("enriched_from"),
+                        "locations": {k: v[:limit] for k, v in q.items()}}))
+
+    @app.get("/api/geodata/elevation", tags=["exposure"])
+    def point_elevation(lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-180, le=180),
+                        lidar: bool = Query(False, description="Also query the USGS 3DEP point service (≈5 s)")):
+        """Ground elevation at a point from each source: 2′ ETOPO1, ≈10 m 3DEP terrain tiles, optional 3DEP point."""
+        from ..geodata.terrain import ground_elevation, point_elevation_3dep
+        from ..physics.dem import elevation as etopo
+
+        g, info = ground_elevation([lat], [lon], fetcher)
+        out = {"lat": lat, "lon": lon, "etopo1_2min_m": float(etopo(lat, lon)),
+               "terrain_tiles_m": float(g[0]) if np.isfinite(g[0]) else None, "terrain_tiles": info}
+        if lidar:
+            out["usgs_3dep_point"] = point_elevation_3dep(lat, lon, fetcher)
+        return J(clean(out))
 
     # ------------------------------------------------------------------ analyses
     @app.post("/api/analyses", tags=["analysis"])

@@ -84,6 +84,25 @@ the building's ground height is sampled from the mesh itself.
 ![Street-level view: exposed building matched to its footprint, flood plane 3.9 m above ground at T+1 h](docs/img/develop-street.png)
 ![Exposed buildings ranked by loss, with footprint matches and the building card](docs/img/develop-exposed.png)
 
+**Exposure enrichment: building-scale ground and footprints.** One job attaches three things to
+each coastal location (or every location):
+
+- USGS 3DEP ground elevation (about 10 m resolution);
+- its mapped OSM footprint (area, height, storeys);
+- a data-quality report.
+
+Surge depth then uses each building's real ground instead of a 3.7 km DEM cell. On the demo book the
+coarse DEM puts coastal buildings a median 1.9 m too high. Correcting it raises Ian's on-land surge
+event loss by **+22 %** and Katrina's by **+29 %**, while geocodes found on open water are flagged
+separately ([methodology §9.4](docs/methodology.md)).
+
+```python
+r = cf.enrich(pid, scope="coastal")        # new portfolio + QA report (match rate, elevation bias, offshore flags)
+cf.quality(r["portfolio"]["id"])           # per-location: ground (3DEP) vs 2′ DEM, footprint match, storeys before/after
+cf.elevation(26.581, -81.949, lidar=True)  # point ground from ETOPO1, 3DEP tiles and the USGS 1 m lidar service
+dev = cf.develop(portfolio_id=r["portfolio"]["id"], analog="ian_2022")  # surge on measured ground
+```
+
 Enabling Google 3D (the Map Tiles API must be enabled on the key):
 
 ```bash
@@ -198,6 +217,8 @@ Validation maps aliases, coerces types, applies defaults and reports problems as
 | `POST /api/develop` (`?wait=true`) | Time-resolved development of one event realization (surge, rain, rupture, per-building damage) |
 | `POST /api/develop/seismogram` | EXSIM-style synthetic seismogram and PSA at any site |
 | `GET /api/terrain/{z}/{x}/{y}.png` | ETOPO1 terrain/bathymetry as Terrarium tiles |
+| `POST /api/portfolios/{id}/enrich`, `GET /api/portfolios/{id}/quality` | Exposure enrichment (3DEP ground, OSM footprints) → new portfolio + QA |
+| `GET /api/geodata/elevation` | Point ground elevation: ETOPO1 vs 3DEP tiles vs USGS 1 m lidar point service |
 | `GET /api/integrations` | Which map integrations are available (Google 3D Tiles proxy, OSM vector tiles); never returns secrets |
 | `GET /v1/3dtiles/…` | Pass-through for Google Photorealistic 3D Tiles (server key; only the 3D Tiles tree is reachable) |
 | `GET /api/jobs/{id}` | Job progress and results |
@@ -233,8 +254,8 @@ These numbers come from the 5,000-location demo book ($16.25bn TIV), with 20,000
 - **Random fields:** the Vecchia field with m = 30 reproduces Matérn correlations to within 0.013–0.026.
 - **Wind:** the browser and server wind fields agree to about 0.002 m/s.
 
-**Tests:** `pytest` runs 59 tests covering the hazard physics, random fields, the surge solver
-(the analytic set-up and mass conservation), rupture kinematics, the Google 3D Tiles proxy, the maths identities, the financial
+**Tests:** `pytest` runs 66 tests covering the hazard physics, random fields, the surge solver
+(the analytic set-up and mass conservation), rupture kinematics, the Google 3D Tiles proxy, the PNG/MVT decoders and the enrichment pipeline, the maths identities, the financial
 terms, reinsurance path logic, the API and the SDK.
 
 ## Project layout
@@ -249,6 +270,8 @@ catforge/
   analytics/      ep.py · analytic.py (FFT) · allocation.py · sensitivity.py · insights.py
   api/            app.py · schemas.py · store.py (jobs, persistence)
   api/tiles3d.py  Google Photorealistic 3D Tiles pass-through + /api/integrations
+  geodata/        fetch.py (cached concurrent tiles) · png.py · mvt.py (in-house decoders) · terrain.py (3DEP)
+                  buildings.py (OSM footprint matching) · enrich.py (enrichment pipeline + QA)
   physics/        grf.py (Matérn, Vecchia, circulant) · surge2d.py · tc_dynamics.py · eq_dynamics.py
                   dem.py (ETOPO1, terrain tiles) · develop.py (4-D event payloads)
   scenario.py · client.py · cli.py · rng.py · geo.py · data/ (incl. etopo1_2min.npz)

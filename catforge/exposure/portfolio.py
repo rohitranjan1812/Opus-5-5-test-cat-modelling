@@ -41,6 +41,11 @@ SCHEMA: dict[str, tuple[str, object]] = {
     "acc_attach": ("float", 0.0),
     "acc_layer_limit": ("float", 0.0),
     "acc_share": ("float", 1.0),
+    # physical attributes (OED-style; NaN = unknown, the models fall back to their defaults)
+    "ground_elev_m": ("float", None),
+    "first_floor_height_m": ("float", None),
+    "building_height_m": ("float", None),
+    "floor_area_m2": ("float", None),
 }
 REQUIRED = ("lat", "lon", "tiv_building")
 
@@ -53,6 +58,8 @@ ALIASES = {
     "locdedwind": "ded_tc", "locdedeq": "ded_eq", "loclimit": "loc_limit", "accded": "acc_ded",
     "acclimit": "acc_limit", "accattach": "acc_attach", "acclayerlimit": "acc_layer_limit",
     "accshare": "acc_share", "roofshape": "roof_shape", "lineofbusiness": "lob",
+    "groundelevation": "ground_elev_m", "elevation": "ground_elev_m", "firstfloorheight": "first_floor_height_m",
+    "buildingheight": "building_height_m", "floorarea": "floor_area_m2",
 }
 
 
@@ -125,7 +132,8 @@ class Portfolio:
             "tiv_by_coverage": dict(zip(["building", "contents", "bi"], self.tiv.sum(axis=0).tolist())),
             "bbox": [float(L["lon"].min()), float(L["lat"].min()), float(L["lon"].max()), float(L["lat"].max())],
             "by_state": by("state"), "by_construction": by("construction"), "by_occupancy": by("occupancy"),
-            "by_lob": by("lob"), "by_year_band": by("year_band"), "meta": self.meta, "warnings": self.warnings[:50],
+            "by_lob": by("lob"), "by_year_band": by("year_band"), "warnings": self.warnings[:50],
+            "meta": {k: v for k, v in self.meta.items() if k != "quality"},  # per-location QA: /quality endpoint
         }
 
     def with_changes(self, mask: np.ndarray, **changes) -> Portfolio:

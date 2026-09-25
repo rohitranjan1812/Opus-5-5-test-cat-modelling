@@ -178,3 +178,17 @@ class CatForgeClient:
         if arr.get("nan") is not None:
             out[raw.reshape(arr["shape"]) == arr["nan"]] = np.nan
         return out / arr["scale"]
+
+    # ------------------------------------------------------------------ exposure enrichment
+    def enrich(self, portfolio_id: str, scope: str = "coastal", elevation: bool = True, footprints: bool = True,
+               max_snap_m: float = 35.0, on_progress=None) -> dict:
+        """Building-scale ground elevation + mapped-footprint attributes; returns the new portfolio and the report."""
+        job = self.post(f"/api/portfolios/{portfolio_id}/enrich", json={"scope": scope, "elevation": elevation,
+                                                                       "footprints": footprints, "max_snap_m": max_snap_m})
+        return self.wait(job, on_progress=on_progress)["result"]
+
+    def quality(self, portfolio_id: str, limit: int = 500) -> dict:
+        return self.get(f"/api/portfolios/{portfolio_id}/quality", limit=limit)
+
+    def elevation(self, lat: float, lon: float, lidar: bool = False) -> dict:
+        return self.get("/api/geodata/elevation", lat=lat, lon=lon, lidar=str(lidar).lower())

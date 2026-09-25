@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
+import type { Job } from '../api'
 import type { EChartsOption } from 'echarts'
 import { api } from '../api'
 import type { Breakdown, PortfolioSummary } from '../api'
 import Chart from '../components/Chart'
 import MapView, { MapLegend } from '../components/MapView'
 import type { Layer } from '../components/MapView'
-import { Card, Download, Empty, NumberField, Tile } from '../components/ui'
+import { Card, Download, Empty, JobStatus, NumberField, Seg, Tile } from '../components/ui'
 import { money, moneyAxis, num } from '../format'
 import { useApp, useFetch } from '../state'
 import { BLUE, TOKENS, barItem, catAxis, rampCss, seqColor } from '../theme'
@@ -25,6 +26,95 @@ function breakdownOption(mode: 'dark' | 'light', rows: Breakdown[], top = 12): E
     series: [{ type: 'bar', data: r.map((x) => x.tiv), barMaxWidth: 16, itemStyle: barItem(t.series[0], true),
       label: { show: true, position: 'right', color: t.text2, formatter: (p: { value: unknown }) => moneyAxis(p.value as number) } }],
   }
+}
+
+interface EnrichReport {
+  scope: string; n_locations: number; n_scope: number; elapsed_s: number
+  elevation?: { n: number; pixel_m: number; tiles: number; tiles_missing: number; source: string; share_lower_by_1m: number | null
+    below_1m: number; below_msl: number; coarse_minus_measured_m: { n: number; mean?: number; median?: number; p10?: number; p90?: number } }
+  footprints?: { matched: number; inside: number; snapped: number; none: number; match_rate: number | null; median_snap_m: number | null
+    informative_height: number; stories_changed: number; stories_up: number; stories_down: number; tiles: number; source: string }
+  flags?: { possible_offshore: number; examples: string[] }
+  fetch?: { requests: number; cache_hits: number; bytes: number; errors: number }
+}
+interface Quality { report: EnrichReport; enriched_from: string; locations: { etopo_m?: (number | null)[]; ground_elev_m?: (number | null)[] } }
+
+/** Building-scale ground elevation + mapped footprints for the selected portfolio (server job), and its QA report. */
+function Enrichment({ portfolioId, enriched, onDone }: { portfolioId: string; enriched: boolean; onDone: (id: string) => void }) {
+  const { mode } = useApp()
+  const t = TOKENS[mode]
+  const [scope, setScope] = useState<'coastal' | 'all'>('coastal')
+  const [job, setJob] = useState<Job | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const q = useFetch(enriched ? () => api.get<Quality>(`/portfolios/${portfolioId}/quality`, { limit: 100000 }) : null, [portfolioId, enriched])
+  const rep = q.data?.report
+
+  async function run() {
+    setErr(null)
+    try {
+      const j = await api.post<Job>(`/portfolios/${portfolioId}/enrich`, { scope })
+      setJob(j)
+      const done = await api.waitJob<{ portfolio: { id: string } }>(j, setJob, 600)
+      onDone(done.result.portfolio.id)
+    } catch (e) { setErr(String(e)) }
+  }
+
+  const hist = useMemo((): EChartsOption | null => {
+    const L = q.data?.locations
+    if (!L?.etopo_m || !L.ground_elev_m) return null
+    // what the surge model assumed without measurement: the 2′ cell value floored at 1 m
+    const d = L.ground_elev_m.map((g, i) => (g == null || L.etopo_m![i] == null ? null : Math.max(L.etopo_m![i] as number, 1) - g))
+      .filter((x): x is number => x != null)
+    if (!d.length) return null
+    // uniform 1 m bins; the end bins are open (≤ −5, ≥ 9)
+    const lo = -5
+    const hi = 9
+    const counts = new Array(hi - lo + 1).fill(0)
+    for (const x of d) counts[Math.min(hi - lo, Math.max(0, Math.floor(x) - lo))]++
+    const labels = counts.map((_, k) => (k === 0 ? `≤${lo + 1}` : k === counts.length - 1 ? `≥${hi}` : `${lo + k}…${lo + k + 1}`))
+    return {
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: (p: unknown) => {
+        const x = (p as { dataIndex: number; value: number }[])[0]
+        return `${labels[x.dataIndex]} m<br/><b>${x.value}</b> locations`
+      } },
+      grid: { left: 8, right: 12, top: 12, bottom: 34, containLabel: true },
+      xAxis: catAxis(mode, labels, { name: 'Coarse-DEM ground − measured ground (m)', nameLocation: 'middle', nameGap: 26, nameTextStyle: { color: t.text3 } }),
+      yAxis: { type: 'value', axisLabel: { color: t.text3 }, splitLine: { lineStyle: { color: t.grid } } },
+      series: [{ type: 'bar', data: counts, barCategoryGap: '8%', itemStyle: barItem(t.series[0]) }],
+    }
+  }, [q.data, mode, t])
+
+  const pct = (x: number | null | undefined) => (x == null ? '—' : `${(100 * x).toFixed(0)}%`)
+  const running = job && (job.status === 'running' || job.status === 'queued')
+  return (
+    <Card title="Data quality & enrichment" desc={enriched
+      ? 'Building-scale ground elevation (USGS 3DEP terrain tiles, ≈10 m) and mapped OpenStreetMap footprints were attached to this portfolio.'
+      : 'Attach building-scale ground elevation (USGS 3DEP, ≈10 m) and mapped building footprints (OpenStreetMap: area, height, storeys) — surge depth then uses each building’s real ground, and the match doubles as a geocoding check.'}
+      tools={!enriched && <div className="row" style={{ gap: 8 }}>
+        <Seg value={scope} onChange={setScope} options={[{ value: 'coastal', label: 'Coastal' }, { value: 'all', label: 'All locations' }]} ariaLabel="Enrichment scope" />
+        <button className="btn primary sm" onClick={run} disabled={!!running}>Enrich</button></div>}>
+      {running && <JobStatus job={job} />}
+      {err && <div className="error small">{err}</div>}
+      {enriched && rep && (
+        <div className="grid g3">
+          <div className="col" style={{ gap: 10 }}>
+            <div className="grid g2">
+              <Tile label="Footprint match" value={pct(rep.footprints?.match_rate)}
+                foot={rep.footprints ? `${num(rep.footprints.inside)} inside · ${num(rep.footprints.snapped)} snapped (median ${rep.footprints.median_snap_m?.toFixed(0) ?? '—'} m) · ${num(rep.footprints.none)} none` : ''} />
+              <Tile label="Ground lower than 2′ DEM by >1 m" value={pct(rep.elevation?.share_lower_by_1m)}
+                foot={rep.elevation ? `median ${rep.elevation.coarse_minus_measured_m.median?.toFixed(2) ?? '—'} m · ${num(rep.elevation.below_msl)} below MSL` : ''} />
+              <Tile label="Storeys updated" value={num(rep.footprints?.stories_changed ?? 0)} foot={rep.footprints ? `${num(rep.footprints.informative_height)} footprints with a mapped height` : ''} />
+              <Tile label="Possible offshore geocodes" value={num(rep.flags?.possible_offshore ?? 0)} foot="on water, no building within 35 m" />
+            </div>
+            <div className="small muted">{num(rep.n_scope)} of {num(rep.n_locations)} locations in scope ({rep.scope}) · {rep.elevation ? `${num(rep.elevation.tiles)} terrain tiles at ${rep.elevation.pixel_m.toFixed(1)} m/px` : ''}
+              {rep.fetch ? ` · ${num(rep.fetch.requests)} requests, ${num(rep.fetch.cache_hits)} cache hits, ${(rep.fetch.bytes / 1e6).toFixed(0)} MB` : ''} · {rep.elapsed_s.toFixed(0)} s.
+              {' '}Sources: USGS 3DEP via Terrain Tiles (AWS Open Data); © OpenStreetMap contributors, OpenMapTiles, OpenFreeMap.</div>
+          </div>
+          <div className="span2">{hist ? <Chart option={hist} height={250} ariaLabel="Ground elevation bias histogram" /> : <Empty>—</Empty>}</div>
+        </div>
+      )}
+    </Card>
+  )
 }
 
 export default function Exposure() {
@@ -152,6 +242,11 @@ export default function Exposure() {
           {s?.warnings?.length ? <Card title="Validation warnings"><ul className="small sub">{s.warnings.map((w) => <li key={w}>{w}</li>)}</ul></Card> : null}
         </div>
       </div>
+
+      {s && portfolioId && (
+        <Enrichment portfolioId={portfolioId} enriched={!!(s.meta as { enrichment?: unknown }).enrichment}
+          onDone={async (id) => { await refresh(); setPortfolioId(id) }} />
+      )}
 
       {s && (
         <div className="grid g3">

@@ -446,7 +446,73 @@ stream, so every other location is unchanged. It removed 676 of 5,000 demo locat
 in open water. The 2′ DEM cannot resolve the coastal fringe, so the footprint match is the finer
 check.
 
-### 9.4 Rendering (why the picture is quantitatively right)
+### 9.4 Exposure enrichment and the coarse-DEM bias
+
+`POST /api/portfolios/{id}/enrich` (SDK `enrich()`) returns a **new** portfolio. By default it covers
+coastal locations (within 30 km of the coast and below 20 m); `scope="all"` covers every location.
+Each location in scope gets two things.
+
+**Building-scale ground elevation (`ground_elev_m`).**
+
+- It is the bilinear value from Terrain Tiles (AWS Open Data, Tilezen "terrarium" encoding; USGS
+  3DEP/NED in the US) at z14, about 8–9 m per pixel at Gulf latitudes.
+- The PNGs are decoded in-house: numba scanline unfiltering covering all five PNG filter types.
+- A cross-check against USGS's 1 m lidar point service at a Cape Coral building: 2.42 m from the tiles
+  vs 2.47 m from lidar. The same point service is exposed at `GET /api/geodata/elevation?lidar=true`.
+- `ground_elev_m` replaces the surge model's building ground, which was the 2′ ETOPO1 cell value
+  floored at 1 m (§9.1).
+- A known `first_floor_height_m`, for example from an elevation certificate, likewise replaces the
+  era default in the depth–damage function.
+
+**Mapped footprint.**
+
+- OpenStreetMap buildings come from the OpenMapTiles vector tiles, decoded by a minimal in-house
+  protobuf reader. Producers merge same-attribute buildings into one MultiPolygon, so candidate
+  rings are filtered by their bounding boxes around each location.
+- The match rule is the same as the 3-D view's: inside a footprint, else the nearest edge within 35 m.
+- Footprint area, and the mapped height when it is informative, give `building_height_m`,
+  `floor_area_m2` and a re-derived storey count. OpenMapTiles reports 5 m when OSM has neither a
+  height nor a level count, so only taller buildings change storeys.
+
+**QA report.** It gives the match rate, inside vs snapped, the median snap distance, the distribution
+of coarse-minus-measured ground, and the count of possible offshore geocodes (on water with no
+building within 35 m). Tiles are fetched concurrently into a disk cache, and `CATFORGE_OFFLINE=1`
+replays a run from the cache.
+
+**Why it matters (demo book, 1,640 coastal locations).** The ground the surge model assumed without
+measurement sits a median **1.9 m above the measured ground**, and **58 %** of locations are more than
+1 m lower than assumed; 118 are below mean sea level. The 2′ DEM smooths coastal cities upward, as the
+point checks in the table below show.
+
+| Point | USGS 3DEP (tiles) | ETOPO1 2′ | Assumed by the surge model |
+|---|---|---|---|
+| Downtown Miami | 0.52 m | 6.7 m | 6.7 m |
+| New Orleans | 1.66 m | 4.45 m | 4.45 m |
+| Cape Coral | 2.42 m | 2.30 m | 2.30 m |
+
+**Loss impact.** Ground-up loss from the time-resolved development (§9.1), same realization (seed 1),
+original vs enriched demo book. Buildings flagged as possible offshore geocodes are reported
+separately, because measured ground puts them at the waterline: they are a data problem, not a
+physics result.
+
+| Event | On-land buildings | GU loss, coarse ground | GU loss, measured ground | Change | Flooded > 0.3 m |
+|---|---|---|---|---|---|
+| Ian 2022 (SW Florida) | 990 | $115.1m | $140.7m | **+22 %** | 18 → 45 |
+| Katrina 2005 (New Orleans / Gulf Coast) | 262 | $12.9m | $16.6m | **+29 %** | 35 → 36 |
+| Michael 2018 (Panhandle) | 53 | $10.56m | $10.60m | +0.4 % | 0 → 2 |
+| Harvey 2017 (Texas coast) | 100 | $3.01m | $3.10m | +3 % | 1 → 1 |
+
+The flagged offshore geocodes move far more: Katrina's 22 go from $16.2m to $41.5m, and Michael's
+and Harvey's 5 each more than double. Two readings follow.
+
+- **Where the surge meets populated low ground** (SW Florida, New Orleans), coarse-cell ground
+  understates event surge loss by roughly a fifth to a third.
+- **Geocode quality** (points on water) can move an event's loss more than the physics does, so
+  enrichment should run before any surge analysis.
+
+The wind-only loss is unchanged in every case: wind damage does not depend on ground elevation.
+
+### 9.5 Rendering (why the picture is quantitatively right)
 
 - **Terrain** comes from the same ETOPO1 grid, served as Terrarium tiles by `/api/terrain/{z}/{x}/{y}.png`. It drives both MapLibre terrain and a hypsometric/bathymetric tint.
 - **Fields are draped as canvases whose pixel rows are uniform in Web-Mercator y.** MapLibre warps image sources linearly in Mercator space, so every pixel is evaluated at its true latitude; there is no drift across tall domains.

@@ -133,6 +133,15 @@ def _damage_uniforms(n, rng, rho_e, rho_c, cells):
     return np.array([norm_cdf(v) for v in x])
 
 
+def _site_ground(lat, lon, measured=None) -> np.ndarray:
+    """Building ground elevation: measured where available (enrichment), else the 2′ DEM."""
+    z = elevation(lat, lon, fill=0.0)
+    if measured is None:
+        return z
+    g = np.asarray(measured, float)
+    return np.where(np.isfinite(g), g, z)
+
+
 def _cities(bbox) -> list[dict]:
     from ..data.cities import CITIES
 
@@ -226,13 +235,16 @@ def develop_tc(cat: EventCatalog, name: str, portfolio: Portfolio | None, seed: 
         idx = pairs.site[pairs.ev_ptr[0]:pairs.ev_ptr[1]].astype(np.int64)
         L = portfolio.locations.iloc[idx]
         site_lat, site_lon = L["lat"].to_numpy(float), L["lon"].to_numpy(float)
+        site_ground = L["ground_elev_m"].to_numpy(float) if "ground_elev_m" in L else None
+    else:
+        site_ground = None
     surge = None
     if with_surge:
         from .surge2d import coastal_peak, run_surge
 
         try:
             sres = run_surge(tuple(np.asarray(a, float) for a in tr), max(t0, -24.0), min(t1, 24.0),
-                             sites_lat=site_lat, sites_lon=site_lon)
+                             sites_lat=site_lat, sites_lon=site_lon, sites_ground=site_ground)
             surge = sres
             sub = max(1, int(math.ceil(max(sres["z"].shape) / 110)))
             fr = np.stack(sres["frames"])[:, ::sub, ::sub]
@@ -276,9 +288,10 @@ def develop_tc(cat: EventCatalog, name: str, portfolio: Portfolio | None, seed: 
             runmax_depth = np.maximum.accumulate(sd, axis=1)
             depth_frames = np.stack([np.interp(frames, st, runmax_depth[i], left=0.0, right=runmax_depth[i, -1])
                                      for i in range(site_lat.size)])
+            ffh = L["first_floor_height_m"].to_numpy(float)[:, None] if "first_floor_height_m" in L else None
             d_surge = surge_damage_ratio(depth_frames, L["construction"].to_numpy()[:, None],
                                          L["occupancy"].to_numpy()[:, None], L["stories"].to_numpy()[:, None],
-                                         L["year_built"].to_numpy()[:, None])
+                                         L["year_built"].to_numpy()[:, None], first_floor_m=ffh)
         d_tot = 1.0 - (1.0 - d_wind) * (1.0 - d_surge)
         tiv = portfolio.tiv[idx]
         gu_t = _coverage_loss(tiv, vt.cov[vidx], d_tot)
@@ -291,7 +304,8 @@ def develop_tc(cat: EventCatalog, name: str, portfolio: Portfolio | None, seed: 
             "n": int(idx.size), "loc_id": L["loc_id"].tolist(), "lat": site_lat.round(5).tolist(),
             "lon": site_lon.round(5).tolist(), "tiv": tiv.sum(axis=1).round(0).tolist(),
             "construction": L["construction"].tolist(), "occupancy": L["occupancy"].tolist(),
-            "elev": elevation(site_lat, site_lon, fill=0.0).round(1).tolist(),
+            "elev": _site_ground(site_lat, site_lon, site_ground).round(2).tolist(),
+            "ground_measured": int(np.isfinite(site_ground).sum()) if site_ground is not None else 0,
             "gust": b64(gust, "int16", 10.0), "damage": b64(d_tot, "int16", 1000.0),
             "gu": gu_site_final.round(0).tolist(), "damage_final": d_tot[:, -1].round(4).tolist(),
             "surge_depth": b64(depth_frames if depth_frames is not None else np.zeros_like(d_tot), "int16", 100.0),
@@ -386,7 +400,7 @@ def develop_eq(cat: EventCatalog, name: str, portfolio: Portfolio | None, seed: 
             sites_payload = {"n": int(idx.size), "loc_id": L["loc_id"].tolist(), "lat": slat.round(5).tolist(),
                              "lon": slon.round(5).tolist(), "tiv": tiv.sum(axis=1).round(0).tolist(),
                              "vs30": L["vs30"].round(0).tolist(), "construction": L["construction"].tolist(),
-                             "elev": elevation(slat, slon, fill=0.0).round(1).tolist(),
+                             "elev": _site_ground(slat, slon, L["ground_elev_m"].to_numpy(float) if "ground_elev_m" in L else None).round(2).tolist(),
                              "pga": np.round(pga_s, 4).tolist(), "pga_median": np.round(med_s, 4).tolist(),
                              "t_p": np.round(sp, 2).tolist(), "t_s": np.round(ss, 2).tolist(),
                              "t_peak": np.round(sm, 2).tolist(), "damage": np.round(d, 4).tolist(),
