@@ -102,10 +102,15 @@ ENSO_REGIMES = [Regime("La Niña", 0.25, 1.30), Regime("Neutral", 0.50, 1.00), R
 class HazardUncertainty:
     """Primary (hazard) uncertainty and dependence for a peril, in log-intensity space.
 
-    ln I_ij = ln m_ij + η_i + ε_ij,  η_i ~ N(0, σ_b²) shared by all sites in an event,
-    ε_ij ~ N(0, σ_w²) site-specific.  ε is folded analytically into the vulnerability tables;
-    η is sampled per occurrence.  Residual dependence of the combined (ε, damage) variable is a
-    two-level Gaussian copula: event-wide factor (ρ_event) + spatial-cell factor (ρ_cell).
+    ln I_ij = ln m_ij + η_i + W_i(s_j),  η_i ~ N(0, σ_b²) shared by all sites in an event.
+
+    * ``dependence="grf"`` (default): W_i = σ_w·Z_i with Z_i a Matérn Gaussian random field
+      (smoothness ``grf_nu``, practical range ``grf_range_km``) sampled explicitly at the sites;
+      the remaining damage (vulnerability) uncertainty is coupled by a weak two-level copula
+      (``dmg_rho_event``, ``dmg_rho_cell``) representing construction-quality/claims correlation.
+    * ``dependence="copula"`` (legacy): W is folded analytically into the vulnerability tables and
+      the combined (W, damage) variable is coupled by a two-level Gaussian copula
+      (``rho_event``, ``rho_cell``).
     """
 
     sigma_between: float
@@ -113,6 +118,10 @@ class HazardUncertainty:
     rho_event: float
     rho_cell: float
     cell_deg: float = 0.25
+    grf_nu: float = 0.5
+    grf_range_km: float = 30.0
+    dmg_rho_event: float = 0.04
+    dmg_rho_cell: float = 0.10
 
 
 @dataclass

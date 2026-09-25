@@ -26,6 +26,9 @@ E1, E5, E6, E7, MH = -0.53804, 0.28805, -0.10164, 0.0, 6.75
 C1, C2, C3, MREF, RREF = -0.66050, 0.11970, -0.01151, 4.5, 1.0
 BLIN, B1, B2, V1, V2, VREF = -0.360, -0.640, -0.14, 180.0, 300.0, 760.0
 TAU, PHI = 0.26, 0.50
+# Intra-event residual field: Jayaram & Baker (2009) exponential model for PGA, practical range ~30 km
+EQ_UNCERTAINTY = HazardUncertainty(sigma_between=TAU, sigma_within=PHI, rho_event=0.12, rho_cell=0.40,
+                                   grf_nu=0.5, grf_range_km=30.0, dmg_rho_event=0.04, dmg_rho_cell=0.10)
 
 CEUS_REGIONS = {"Central US", "South Carolina"}
 
@@ -136,7 +139,7 @@ def generate_eq_catalog(seed: int = 7, fault_dm: float = 0.1, area_dm: float = 0
     geometry = {"ptr": np.asarray(ptr, np.int64), "lat": np.asarray(rup_lat, float), "lon": np.asarray(rup_lon, float)}
     return EventCatalog(
         peril="EQ", events=events, geometry=geometry, frequency=FrequencyModel(),
-        uncertainty=HazardUncertainty(sigma_between=TAU, sigma_within=PHI, rho_event=0.12, rho_cell=0.40),
+        uncertainty=EQ_UNCERTAINTY,
         intensity_unit="g (PGA)",
         meta={"seed": seed, "gmpe": "BA08-form (illustrative coefficients)", "n_faults": len(FAULTS),
               "n_areas": len(AREAS)},
@@ -163,7 +166,7 @@ def single_rupture(lat: float, lon: float, mag: float, strike: float = 0.0, dept
     geometry = {"ptr": np.array([0, len(lats)], np.int64), "lat": np.asarray(lats, float),
                 "lon": np.asarray(lons, float)}
     return EventCatalog(peril="EQ", events=events, geometry=geometry, frequency=FrequencyModel(),
-                        uncertainty=HazardUncertainty(TAU, PHI, 0.12, 0.40), intensity_unit="g (PGA)",
+                        uncertainty=EQ_UNCERTAINTY, intensity_unit="g (PGA)",
                         meta={"scenario": True})
 
 

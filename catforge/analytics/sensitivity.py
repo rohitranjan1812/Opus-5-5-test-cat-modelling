@@ -26,6 +26,17 @@ def _metrics(ann: np.ndarray) -> dict:
             "tvar_250": tvar_sorted(x, 250)}
 
 
+class _Cat:
+    """Minimal catalog stand-in exposing the base GRF parameters stored in the run context."""
+
+    def __init__(self, ctx, peril):
+        from types import SimpleNamespace
+
+        m = (ctx.grf or {}).get("models", {}).get(peril, {"nu": 0.5, "range_km": 30.0})
+        scale = ctx.config.rho_scale or 1.0
+        self.uncertainty = SimpleNamespace(grf_nu=m["nu"], grf_range_km=m["range_km"] / scale)
+
+
 def base_metrics(res: AnalysisResult) -> dict:
     return _metrics(res.annual("gross"))
 
@@ -51,10 +62,21 @@ def tornado(res: AnalysisResult, spread: float = 0.2) -> dict:
         add(f"{p} vulnerability (damage ×{1 - spread:.1f} / ×{1 + spread:.1f})", f"×{1 - spread:.1f}",
             f"×{1 + spread:.1f}", *out)
     out = []
-    for f in (0.5, 1.5):
-        out.append(_metrics(rerun_ylt(res, p_rho_e=np.minimum(ctx.p_rho_e * f, 0.49),
-                                      p_rho_c=np.minimum(ctx.p_rho_c * f, 0.49))["annual"]))
-    add("Spatial correlation ρ (×0.5 / ×1.5)", "×0.5", "×1.5", *out)
+    if ctx.grf:  # GRF mode: perturb the correlation length of the intra-event residual field
+        from ..engine.model import build_grf, grf_models
+
+        cats = {p: _Cat(ctx, p) for p in res.config.perils}
+        for f in (0.5, 2.0):
+            g2 = build_grf(ctx.portfolio, grf_models(cats, res.config, res.config.rho_scale * f),
+                           {p: float(ctx.grf["p_phi"][PERIL_INDEX[p]]) for p in res.config.perils},
+                           ctx.grf["m"], ctx.ev_ptr, ctx.pair_loc, ctx.ev_peril)
+            out.append(_metrics(rerun_ylt(res, grf=g2)["annual"]))
+        add("Spatial correlation range (×0.5 / ×2)", "×0.5", "×2", *out)
+    else:
+        for f in (0.5, 1.5):
+            out.append(_metrics(rerun_ylt(res, p_rho_e=np.minimum(ctx.p_rho_e * f, 0.49),
+                                          p_rho_c=np.minimum(ctx.p_rho_c * f, 0.49))["annual"]))
+        add("Spatial correlation ρ (×0.5 / ×1.5)", "×0.5", "×1.5", *out)
     out = []
     for f in (0.5, 1.5):
         out.append(_metrics(rerun_ylt(res, p_sig_b=ctx.p_sig_b * f)["annual"]))

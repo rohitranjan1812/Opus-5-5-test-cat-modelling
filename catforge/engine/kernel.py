@@ -3,9 +3,13 @@
 For each occurrence k of event e (peril p) and each affected site j:
 
     η_k   = σ_b(p) Φ⁻¹(u(k, ETA))                       inter-event hazard residual (shared)
+    W_kj  = σ_w(p) Z_k(s_j)                             intra-event residual field (GRF mode):
+            Z_k(s_j) = Σ_i b_ji Z_k(s_i) + d_j Φ⁻¹(u(k, W+j))   Vecchia sweep over the event's
+                                                          ancestor closure, in maximin order
     x_kj  = √ρ_e Z_k + √ρ_c Z_{k,cell(j)} + √(1-ρ_e-ρ_c) ε_kj     two-level Gaussian copula
     U_kj  = Φ(x_kj)
-    D_kj  = F⁻¹_eff(U_kj | ln m_ej + η_k)                 inverse CDF of the convolved damage table
+    D_kj  = F⁻¹(U_kj | ln m_ej + η_k + W_kj)              inverse CDF of the damage table
+            (in legacy copula mode W is integrated into the table and omitted here)
     → coverage losses → site terms → account terms → per-risk → occurrence totals
 
 All normals come from the stateless counter RNG (``catforge.rng``): draws depend only on
@@ -20,6 +24,7 @@ import math
 import numba as nb
 import numpy as np
 
+from ..physics.grf import TAG_W_BASE
 from ..rng import TAG_CELL_BASE, TAG_ETA, TAG_LOC_BASE, TAG_Z, norm_cdf, stream, uniform
 from ..rng import norm_ppf_fast as norm_ppf
 
@@ -72,7 +77,8 @@ def loss_kernel(occ_event, occ_key, occ_w, seed,
                 cdf, v_li0, v_dli, bin_lo, bin_hi, cov,
                 pol_ded, pol_lim, pol_att, pol_llim, pol_share,
                 pr_ret, pr_lim,
-                n_grp, want_loc, detail_ptr, max_pairs, n_chunks):
+                n_grp, want_loc, detail_ptr, max_pairs, n_chunks,
+                p_grf, p_phi, vptr, vnbr, vcoef, vsd, clo_ptr, clo):
     K = occ_event.shape[0]
     n_loc = tiv.shape[0]
     gu_out = np.zeros(K)
@@ -92,6 +98,7 @@ def loss_kernel(occ_event, occ_key, occ_w, seed,
     for c in nb.prange(n_chunks):
         xbuf = np.empty(max_pairs)
         gbuf = np.empty(max_pairs)
+        wbuf = np.zeros(n_loc)
         k_end = min((c + 1) * chunk, K)
         for k in range(c * chunk, k_end):
             e = occ_event[k]
@@ -107,6 +114,15 @@ def loss_kernel(occ_event, occ_key, occ_w, seed,
             dsc = p_dmg_scale[per]
             a = ev_ptr[e]
             b = ev_ptr[e + 1]
+            grf = p_grf[per] == 1
+            phi = p_phi[per]
+            if grf:
+                for qq in range(clo_ptr[e], clo_ptr[e + 1]):
+                    jj = clo[qq]
+                    acc = 0.0
+                    for t in range(vptr[per, jj], vptr[per, jj + 1]):
+                        acc += vcoef[t] * wbuf[vnbr[t]]
+                    wbuf[jj] = acc + vsd[per, jj] * norm_ppf(uniform(h, TAG_W_BASE + jj))
             gu_tot = 0.0
             gross_tot = 0.0
             pr_tot = 0.0
@@ -121,7 +137,10 @@ def loss_kernel(occ_event, occ_key, occ_w, seed,
                     zc = norm_ppf(uniform(h, TAG_CELL_BASE + loc_cell[j]))
                     eps = norm_ppf(uniform(h, TAG_LOC_BASE + j))
                     u = norm_cdf(sre * z + src * zc + sri * eps)
-                    d = _sample_damage(cdf, v, pair_logi[q] + eta, v_li0[v], v_dli[v], u, bin_lo, bin_hi)
+                    li = pair_logi[q] + eta
+                    if grf:
+                        li += phi * wbuf[j]
+                    d = _sample_damage(cdf, v, li, v_li0[v], v_dli[v], u, bin_lo, bin_hi)
                     d = min(1.0, d * dsc)
                     gu = tiv[j, 0] * d
                     if tiv[j, 1] > 0.0:

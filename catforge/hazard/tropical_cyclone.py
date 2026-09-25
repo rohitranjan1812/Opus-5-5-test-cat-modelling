@@ -51,6 +51,10 @@ TS_RATE_FACTOR = 0.85
 T_START_H = -36
 T_END_H = 60
 
+# Wind-field model error: σ_b (storm-level) and σ_w (spatial, Matérn ν=3/2 over ~storm-structure scales)
+TC_UNCERTAINTY = HazardUncertainty(sigma_between=0.08, sigma_within=0.10, rho_event=0.10, rho_cell=0.25,
+                                   grf_nu=1.5, grf_range_km=60.0, dmg_rho_event=0.04, dmg_rho_cell=0.10)
+
 TERRAIN_GUST_FACTOR = {"coastal": 1.18, "open": 1.10, "suburban": 1.00, "urban": 0.94}
 
 SAFFIR_SIMPSON = [(0, 0.0), (1, 33.0), (2, 43.0), (3, 50.0), (4, 58.0), (5, 70.0)]
@@ -199,7 +203,7 @@ def generate_tc_catalog(n_hurricanes: int = 4000, n_tropical_storms: int = 800, 
     return EventCatalog(
         peril="TC", events=events, geometry=geometry,
         frequency=frequency or FrequencyModel(dispersion_r=20.0, regimes=list(ENSO_REGIMES)),
-        uncertainty=HazardUncertainty(sigma_between=0.08, sigma_within=0.10, rho_event=0.10, rho_cell=0.25),
+        uncertainty=TC_UNCERTAINTY,
         intensity_unit="m/s (3-s gust)",
         meta={"seed": seed, "n_hurricanes": n_hurricanes, "n_tropical_storms": n_tropical_storms,
               "model": "landfall-gate + Holland (1980)", "position_alpha": position_alpha,
@@ -288,7 +292,7 @@ def single_track(landfall_lat: float, landfall_lon: float, heading: float, vmax:
     })
     geometry = _pack_tracks([(times, tlat, tlon, thdg, tland, tv, vt_a, rmax_a, b_a)])
     return EventCatalog(peril="TC", events=events, geometry=geometry, frequency=FrequencyModel(),
-                        uncertainty=HazardUncertainty(0.08, 0.10, 0.10, 0.25), intensity_unit="m/s (3-s gust)",
+                        uncertainty=TC_UNCERTAINTY, intensity_unit="m/s (3-s gust)",
                         meta={"scenario": True})
 
 

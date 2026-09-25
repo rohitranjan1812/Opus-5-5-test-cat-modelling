@@ -22,6 +22,15 @@ from ..hazard.base import EventCatalog, FrequencyModel
 from ..hazard.earthquake import generate_eq_catalog
 from ..hazard.footprint import Pairs, compute_pairs
 from ..hazard.tropical_cyclone import generate_tc_catalog, intensity_rate_multiplier
+from ..physics.grf import (
+    Matern,
+    VecchiaField,
+    build_vecchia,
+    event_closures,
+    maximin_order,
+    ordered_neighbors,
+    xyz_km,
+)
 from ..vulnerability.damage import BIN_HI, BIN_LO, VulnTables, build_tables
 from .kernel import loss_kernel
 from .ylt import ELT_KEY_BASE, YLT, rate_change_weights, simulate_ylt
@@ -44,6 +53,9 @@ class AnalysisConfig:
     reinsurance: dict | None = None
     group_by: str = "state"
     allocation_rp: float = 250.0
+    dependence: str = "grf"  # "grf" (Matérn random field, Vecchia) | "copula" (legacy two-level copula)
+    grf: dict[str, dict] = field(default_factory=dict)  # per-peril overrides {"nu": .., "range_km": ..}
+    vecchia_m: int = 30
 
     @classmethod
     def from_dict(cls, d: dict | None) -> AnalysisConfig:
@@ -112,13 +124,15 @@ class RunContext:
     pr_lim: float
     freq: dict[str, FrequencyModel]
     max_pairs: int
-    sigma_within: dict[str, float] = field(default_factory=dict)
+    sigma_within: dict[str, float] = field(default_factory=dict)  # σ folded into vulnerability tables
     catalog_events: dict[str, pd.DataFrame] = field(default_factory=dict)
+    grf: dict | None = None  # Vecchia arrays + per-event closures (GRF dependence)
 
     def kernel(self, occ_event, occ_key, occ_w=None, n_grp=0, want_loc=False, detail_ptr=None, vt=None,
-               p_dmg=None, p_rho_e=None, p_rho_c=None, p_sig_b=None, fin=None):
+               p_dmg=None, p_rho_e=None, p_rho_c=None, p_sig_b=None, fin=None, grf=None):
         vt = vt or self.vt
         fin = fin or self.fin
+        g = grf or self.grf or _NO_GRF
         occ_event = np.asarray(occ_event, np.int64)
         K = occ_event.size
         occ_w = np.ones(K) if occ_w is None else np.asarray(occ_w, float)
@@ -134,7 +148,8 @@ class RunContext:
             float(self.pr_ret), float(self.pr_lim),
             int(n_grp), bool(want_loc),
             np.zeros(0, np.int64) if detail_ptr is None else np.asarray(detail_ptr, np.int64),
-            int(max(self.max_pairs, 1)), n_chunks)
+            int(max(self.max_pairs, 1)), n_chunks,
+            g["p_grf"], g["p_phi"], g["vptr"], g["vnbr"], g["vcoef"], g["vsd"], g["clo_ptr"], g["clo"])
 
 
 @dataclass
@@ -221,12 +236,80 @@ def _combine(model: CatModel, portfolio: Portfolio, cfg: AnalysisConfig, fin: Fi
     return events, ev_ptr, pair_loc[order], pair_logi[order], ev_peril
 
 
+_NO_GRF = {"p_grf": np.zeros(len(PERILS), np.int8), "p_phi": np.zeros(len(PERILS)),
+           "vptr": np.zeros((len(PERILS), 2), np.int64), "vnbr": np.zeros(1, np.int64), "vcoef": np.zeros(1),
+           "vsd": np.ones((len(PERILS), 1)), "clo_ptr": np.zeros(2, np.int64), "clo": np.zeros(1, np.int64)}
+_VECCHIA_CACHE: dict[tuple, object] = {}
+
+
+def _cached(key, fn):
+    if key not in _VECCHIA_CACHE:
+        if len(_VECCHIA_CACHE) > 24:
+            _VECCHIA_CACHE.pop(next(iter(_VECCHIA_CACHE)))
+        _VECCHIA_CACHE[key] = fn()
+    return _VECCHIA_CACHE[key]
+
+
+def grf_models(model_or_catalogs, cfg: AnalysisConfig, range_scale: float = 1.0) -> dict[str, Matern]:
+    cats = model_or_catalogs.catalogs if hasattr(model_or_catalogs, "catalogs") else model_or_catalogs
+    out = {}
+    for p in cfg.perils:
+        if p not in cats:
+            continue
+        u = cats[p].uncertainty
+        o = cfg.grf.get(p, {})
+        out[p] = Matern(float(o.get("nu", u.grf_nu)), float(o.get("range_km", u.grf_range_km)) * range_scale)
+    return out
+
+
+def build_grf(portfolio: Portfolio, models: dict[str, Matern], sigma_w: dict[str, float], m: int,
+              ev_ptr: np.ndarray, pair_loc: np.ndarray, ev_peril: np.ndarray) -> dict:
+    """Vecchia factors per peril (shared maximin ordering / neighbour search) + per-event closures."""
+    L = portfolio.locations
+    lat, lon = L["lat"].to_numpy(float), L["lon"].to_numpy(float)
+    fp = portfolio.fingerprint()
+    n = lat.size
+    order = _cached(("order", fp), lambda: maximin_order(lat, lon))
+    nbrs = _cached(("nbr", fp, m), lambda: ordered_neighbors(xyz_km(lat, lon), order, m))
+    n_p = len(PERILS)
+    p_grf = np.zeros(n_p, np.int8)
+    p_phi = np.zeros(n_p)
+    vptr = np.zeros((n_p, n + 1), np.int64)
+    vsd = np.ones((n_p, n))
+    rank2 = np.zeros((n_p, n), np.int64)
+    nb_parts, cf_parts, off = [], [], 0
+    fields: dict[str, VecchiaField] = {}
+    for p, mod in models.items():
+        i = PERIL_INDEX[p]
+        V = _cached(("vecchia", fp, m, mod.nu, round(mod.range_km, 6)),
+                    lambda mod=mod: build_vecchia(lat, lon, mod, m=m, order=order, neighbors=nbrs))
+        fields[p] = V
+        p_grf[i], p_phi[i] = 1, float(sigma_w[p])
+        vptr[i] = V.ptr + off
+        vsd[i] = V.cond_sd
+        rank2[i] = V.rank
+        nb_parts.append(V.nbr)
+        cf_parts.append(V.coef)
+        off += V.nbr.size
+    vnbr = np.concatenate(nb_parts) if nb_parts else np.zeros(1, np.int64)
+    vcoef = np.concatenate(cf_parts) if cf_parts else np.zeros(1)
+    ev_field = np.where(p_grf[ev_peril] == 1, ev_peril, -1).astype(np.int64)
+    clo_ptr, clo = event_closures(ev_ptr, pair_loc.astype(np.int64), ev_field, vptr, vnbr, rank2, n)
+    return {"p_grf": p_grf, "p_phi": p_phi, "vptr": vptr, "vnbr": vnbr, "vcoef": vcoef, "vsd": vsd,
+            "clo_ptr": clo_ptr, "clo": clo if clo.size else np.zeros(1, np.int64),
+            "models": {p: mo.to_dict() for p, mo in models.items()}, "m": m,
+            "closure_overhead": float(clo.size / max(pair_loc.size, 1)),
+            "nnz_per_site": {p: float(V.nbr.size / max(n, 1)) for p, V in fields.items()}}
+
+
 def build_context(model: CatModel, portfolio: Portfolio, cfg: AnalysisConfig, progress=None) -> RunContext:
     fin = build_financials(portfolio.locations)
     events, ev_ptr, pair_loc, pair_logi, ev_peril = _combine(model, portfolio, cfg, fin, progress)
     if progress:
         progress(0.36, "Vulnerability tables")
-    sigw = {p: c.uncertainty.sigma_within for p, c in model.catalogs.items()}
+    use_grf = cfg.dependence == "grf"
+    # in GRF mode the within-event residual is sampled explicitly, so tables carry no σ_w
+    sigw = {p: (0.0 if use_grf else c.uncertainty.sigma_within) for p, c in model.catalogs.items()}
     vt = build_tables(portfolio.locations, sigw, perils=cfg.perils)
     L = portfolio.locations
     loc_cell = grid_cell_id(L["lat"].to_numpy(), L["lon"].to_numpy(), 0.25)
@@ -239,7 +322,10 @@ def build_context(model: CatModel, portfolio: Portfolio, cfg: AnalysisConfig, pr
         i = PERIL_INDEX[p]
         u = c.uncertainty
         p_sig_b[i] = u.sigma_between * cfg.sigma_between_scale
-        re, rc = u.rho_event * cfg.rho_scale, u.rho_cell * cfg.rho_scale
+        if use_grf:  # copula now only couples vulnerability residuals; rho_scale scales the field range
+            re, rc = u.dmg_rho_event, u.dmg_rho_cell
+        else:
+            re, rc = u.rho_event * cfg.rho_scale, u.rho_cell * cfg.rho_scale
         tot = re + rc
         if tot > 0.98:
             re, rc = re * 0.98 / tot, rc * 0.98 / tot
@@ -249,6 +335,13 @@ def build_context(model: CatModel, portfolio: Portfolio, cfg: AnalysisConfig, pr
     pr = cfg.per_risk or {}
     counts = np.diff(ev_ptr)
     rate = events["rate"].to_numpy(float)
+    grf = None
+    if use_grf:
+        if progress:
+            progress(0.37, "Spatial random field (Vecchia)")
+        grf = build_grf(portfolio, grf_models(model, cfg, cfg.rho_scale),
+                        {p: c.uncertainty.sigma_within for p, c in model.catalogs.items()}, cfg.vecchia_m,
+                        ev_ptr, pair_loc, ev_peril)
     return RunContext(
         portfolio=portfolio, config=cfg, events=events, ev_ptr=ev_ptr, pair_loc=pair_loc, pair_logi=pair_logi,
         ev_peril=ev_peril, ev_rate=rate, ev_rate_base=events["rate_base"].to_numpy(float),
@@ -256,7 +349,8 @@ def build_context(model: CatModel, portfolio: Portfolio, cfg: AnalysisConfig, pr
         loc_grp=codes.astype(np.int32), grp_names=[str(x) for x in names], p_sig_b=p_sig_b, p_rho_e=p_rho_e,
         p_rho_c=p_rho_c, p_dmg=p_dmg, pr_ret=float(pr.get("retention", 0.0) or 0.0),
         pr_lim=float(pr.get("limit", 0.0) or 0.0), freq=freq, max_pairs=int(counts.max()) if counts.size else 1,
-        sigma_within=sigw, catalog_events={p: model.catalogs[p].events for p in cfg.perils if p in model.catalogs})
+        sigma_within=sigw, catalog_events={p: model.catalogs[p].events for p in cfg.perils if p in model.catalogs},
+        grf=grf)
 
 
 def _event_caps(ctx: RunContext) -> np.ndarray:
@@ -421,6 +515,9 @@ def build_summary(res: AnalysisResult) -> dict:
         "rp_table": _rp_table(res),
         "analytic": res.analytic.get("table", []), "analytic_aal": res.analytic.get("aal"),
         "tail_check": res.extras.get("tail_check"),
+        "dependence": {"mode": res.config.dependence,
+                       **({k: v for k, v in res.ctx.grf.items() if k in ("models", "m", "closure_overhead", "nnz_per_site")}
+                          if res.ctx.grf else {})},
         "reinsurance": _jsonable_reins(res.reinsurance),
     }
     return s
