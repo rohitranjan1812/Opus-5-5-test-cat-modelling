@@ -3,8 +3,10 @@
     python scripts/calibrate_surge.py collect [--events 96] [--seed 7]   # ≈ 12 s per event (full model)
     python scripts/calibrate_surge.py fit                                # seconds, re-runnable
 
-**collect.** For a stratified design set of catalog hurricanes (region × intensity class), plus the
-historical analogs, it runs both models:
+**collect.** The design set has three parts: catalog hurricanes stratified by region × intensity
+class; an intense-storm stratum per 1.5° coastal reach × {Cat 1–2, Cat 3, Cat 4+}, so that every bay
+sees big water, as in JPM-OS surge studies; and the historical analogs. For each storm it runs both
+models:
 
 - the full model (2′, track-following domain, −18 h…+12 h);
 - the low-fidelity model (``hazard.surge.lf_event_cells``).
@@ -46,6 +48,21 @@ from catforge.scenario import ANALOGS, build_event
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "catforge" / "data"
 RAW = cache_dir() / "calibration_pairs.npz"
+
+
+def reach_events(cat, per, rng, cell_deg: float = 1.5):
+    """Intense-storm design per coastal reach (as in JPM-OS surge studies): landfall cells of
+    ``cell_deg``° × {Cat 1–2, Cat 3, Cat 4+}, ``per`` storms each. Every bay then sees big water."""
+    ev = cat.events
+    vmax = ev["vmax"].to_numpy(float) if "vmax" in ev else np.full(len(ev), 40.0)
+    lat, lon = ev["landfall_lat"].to_numpy(float), ev["landfall_lon"].to_numpy(float)
+    cls = np.digitize(vmax, [33, 50, 58])  # <Cat1, Cat1–2, Cat3, Cat4+
+    cell = np.floor(lat / cell_deg).astype(int) * 1000 + np.floor(lon / cell_deg).astype(int)
+    picks = []
+    for key in sorted({(c, k) for c, k in zip(cell, cls) if k >= 1}):
+        idx = np.nonzero((cell == key[0]) & (cls == key[1]))[0]
+        picks += list(rng.choice(idx, size=min(per, idx.size), replace=False))
+    return np.array(picks, int)
 
 
 def design_events(cat, n, rng):
@@ -101,7 +118,10 @@ def coastal_nodes(res, la, lo, lf=LF):
 def collect(args):
     rng = np.random.default_rng(args.seed)
     cat = CatModel.default().catalogs["TC"]
-    tracks = [("cat", str(int(i)), _tracks(cat, int(i))) for i in design_events(cat, args.events, rng)]
+    design = design_events(cat, args.events, rng)
+    if args.reach_per:
+        design = np.unique(np.concatenate([design, reach_events(cat, args.reach_per, rng)]))
+    tracks = [("cat", str(int(i)), _tracks(cat, int(i))) for i in design]
     tracks += [("analog", a, track_arrays(build_event("TC", v["params"]))) for a, v in ANALOGS.items() if v["peril"] == "TC"]
     out = {k: [] for k in ("lat", "lon", "z", "hf", "cz", "cell_lat", "cell_lon", "cell_eta")}
     nptr, cptr, names = [0], [0], []
@@ -150,9 +170,10 @@ def main():
     c = sub.add_parser("collect")
     c.add_argument("--events", type=int, default=96)
     c.add_argument("--seed", type=int, default=7)
+    c.add_argument("--reach-per", type=int, default=1, help="intense storms per coastal reach × class (0 = off)")
     f = sub.add_parser("fit")
-    f.add_argument("--alphas", type=float, nargs="+", default=[0.1, 0.15, 0.2, 0.3, 0.4])
-    f.add_argument("--rmaxs", type=float, nargs="+", default=[15.0, 20.0, 25.0, 30.0])
+    f.add_argument("--alphas", type=float, nargs="+", default=[0.1, 0.2, 0.3])
+    f.add_argument("--rmaxs", type=float, nargs="+", default=[20.0, 30.0])
     f.add_argument("--r0", type=float, default=3.5)
     args = ap.parse_args()
     collect(args) if args.cmd == "collect" else fit(args)

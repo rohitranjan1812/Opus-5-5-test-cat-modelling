@@ -129,29 +129,40 @@ It is evaluated only for surge-reachable locations: within 30 km of the coast an
 2′ DEM.
 
 **Correction to the full model — a two-part (hurdle) model (`hazard/surge_calib.py`).** The design
-set is 84 stratified catalog storms (7 coastal regions × 4 intensity classes), plus the 9 historical
-analogs. Both models are run on each. Every coastal 2′ node inside the box is recorded: land nodes,
-plus shoreline water nodes, which is where waterfront buildings geocode on a coarse DEM. That gives
-133,555 node-events, and the full model's value is the peak water surface in the node's 3×3 stencil —
-the rule the engine applies to buildings. Two processes decide what a node sees:
+set has three parts, and both models are run on every storm:
 
-- **connectivity.** P(wet) = σ(θ·[1, x, z, shore, x·z, x − z, (x − z)₊]), a logistic model fitted by
-  IRLS.
-- **level given wet.** y = s(x) + γ·[shore, z, x·shore, x·z] + u<sub>e</sub> + δ<sub>n</sub> + ε,
+- 84 catalog storms stratified by 7 coastal regions × 4 intensity classes;
+- an intense-storm stratum, one storm per 1.5° coastal reach × {Cat 1–2, Cat 3, Cat 4+} (131
+  storms), as in JPM-OS surge studies, so that every bay sees big water;
+- the 9 historical analogs.
+ Every coastal 2′ node inside the box is recorded: land nodes,
+plus shoreline water nodes, which is where waterfront buildings geocode on a coarse DEM. That gives
+305,153 node-events from 224 storms, and the full model's value is the peak water surface in the
+node's 3×3 stencil — the rule the engine applies to buildings. Two processes decide what a node sees:
+
+- **connectivity.** P(wet) = σ(θ·[1, x, z, shore, x·z, x − z, (x − z)₊, Δ, Δ·shore]), a logistic
+  model fitted by IRLS.
+- **level given wet.** y = s(x) + γ·[shore, z, x·shore, x·z, Δ, Δ·shore, min(Δ, 3)·x] +
+  u<sub>e</sub> + δ<sub>n</sub> + ε,
   where s is a linear spline with knots at 1, 2, 3, 4 and 6 m, u<sub>e</sub> ~ N(0, σ<sub>e</sub>²) is
   an event term, δ<sub>n</sub> ~ N(0, τ²) is the node's **site response** (the harbour/bay term), and
   ε ~ N(0, σ²). The crossed random effects are fitted by EM with BLUP shrinkage.
 
 Here z is the node's 2′ ground, clipped to 0–10 m, and shore = 1 when the stencil touches the sea.
 Both are computed from the DEM by the same function (`site_covariates`) in calibration and in the
-engine. The shrunk δ̂<sub>n</sub> and its posterior variance are stored for 8,129 nodes
+engine. Δ = x(α = 0) − x is the friction loss the site rule applied. When a site draws on distant
+water across a bay, that water travels over water and amplifies (funnelling) instead of attenuating.
+Δ lets the model learn this, and it cuts held-out error in water over 1 m deep by 8 %. A per-node
+random *slope* on x (a multiplicative site amplification, fitted as a 2×2 random effect) was tried
+instead. With two or three big storms per bay it overfits, and held-out error rises; physical
+covariates and design coverage do the job instead. The shrunk δ̂<sub>n</sub> and its posterior variance are stored for 8,413 nodes
 (`data/surge_site_response.npz`). Nodes the design set never reached get the prior (0, τ²).
 
 Penetration parameters are chosen by 5-fold, event-grouped cross-validation of flood depth over the
-engine's default ground (the 2′ DEM floored at 1 m). The CV surface is flat for α between 0.15 and
-0.2 and R between 20 and 30 km. Among fits within 1 % of the best, the largest R is taken, because
-misses (flooded nodes that no 4′ cell reaches) are one-sided. The result is **α = 0.2 m/km,
-R = 30 km, r₀ = 3.5 km, σ = 0.45 m, σ<sub>e</sub> = 0.17 m, τ = 0.29 m.**
+engine's default ground (the 2′ DEM floored at 1 m). The CV surface is flat for α between 0.2 and
+0.3 m/km and R between 20 and 30 km. Among fits within 1 % of the best, the largest R is taken,
+because misses (flooded nodes that no 4′ cell reaches) are one-sided. The result is **α = 0.3 m/km,
+R = 20 km, r₀ = 3.5 km, σ = 0.42 m, σ<sub>e</sub> = 0.14 m, τ = 0.32 m.**
 
 **Why a hurdle model and not a Tobit.** Both look principled. At x ≥ 2 m, the held-out residuals of a
 censored single-Gaussian model have skew −0.8 to −2.1 and excess kurtosis 3–7. The error is a
@@ -163,13 +174,14 @@ held-out E[depth] / full-model depth:
 
 | low-fidelity level x | 1–2 m | 2–3 m | 3–4 m | 4–6 m | ≥ 6 m | ground 3–5 m (x ≥ 2) |
 |---|---|---|---|---|---|---|
-| **hurdle (engine)** | 0.83 | **0.98** | **0.95** | **0.97** | **1.05** | **0.95** |
-| Tobit + site term | 1.05 | 0.78 | 0.69 | 0.65 | 0.64 | 0.34 |
-| OLS on wet-in-both pairs | 1.14 | 0.83 | 0.73 | 0.67 | 0.66 | 0.38 |
+| **hurdle (engine)** | **0.94** | **0.98** | **0.97** | **0.98** | **1.01** | **0.96** |
+| Tobit + site term | 1.07 | 0.80 | 0.72 | 0.68 | 0.65 | 0.43 |
+| OLS on wet-in-both pairs | 1.20 | 0.87 | 0.75 | 0.71 | 0.69 | 0.42 |
 
-Overall, the hurdle model has a held-out depth RMSE of 0.37 m (misses included), an aggregate depth
-bias of −2.4 %, a hit rate of 0.82 and a false-alarm ratio of 0.09. The Tobit and the OLS reach
-0.51 m. The OLS on wet pairs is a truncated sample, so it is biased too: +11 % in aggregate.
+Overall, the hurdle model has a held-out depth RMSE of 0.39 m (misses included), 0.50 m where the
+water is over 1 m deep, an aggregate depth bias of −0.3 %, a hit rate of 0.91 and a false-alarm
+ratio of 0.12. The Tobit and the OLS reach 0.83 m and 0.78 m in deep water. The OLS on wet pairs is
+a truncated sample, so it is biased too: +16 % in aggregate.
 Recalibrate with `python scripts/calibrate_surge.py collect && … fit` (about 10 minutes, then about
 10 seconds).
 
@@ -192,6 +204,40 @@ financial terms, so deductibles and limits see the combined loss. The surge shar
 exactly: the kernel re-evaluates the coverage loss without surge from the *same* wind draw. The
 surge-attributed ground-up loss per occurrence is returned alongside, and the analysis summary gives
 the surge AAL share and the hurricane AEP with and without surge (`summary.surge`, the Results page).
+
+**Validation on the tail against the full model (`scripts/validate_surge_tail.py`,
+`docs/validation/surge_tail.json`).** The test case is the demo book (5,000 locations), hurricane
+only, 10,000 years. The 200 worst years (1-in-50 and rarer) are driven by 174 events. Each is re-run
+with the full 2′ model at every coastal building, and exactly those occurrences are re-simulated with
+full-model water levels. Residuals and the connectivity draw are switched off, and the occurrence
+keys are unchanged, so wind uses common random numbers. 12 of the 174 were calibration storms; the
+rest are out of sample.
+
+| Hurricane AEP (GU, surge included) | engine | full model on tail events | engine vs full | wind only |
+|---|---|---|---|---|
+| 1-in-100 | $486.5m | $503.8m | −3.4 % | $381.9m |
+| 1-in-250 | $582.2m | $604.0m | **−3.6 %** | $497.3m |
+| 1-in-500 | $663.8m | $691.9m | −4.1 % | $584.8m |
+
+Compute: the full model takes 5.8 s per event and the low-fidelity model 0.24 s serial (0.07 s
+threaded), about 24× cheaper serial and about 90× in the engine. A warm 10,000-year hurricane
+analysis with surge takes 21 s; the first run of a catalog adds about 4 minutes of low-fidelity runs,
+which are then cached. On this book surge is 43 % of hurricane ground-up AAL (1,604 of 5,000
+locations reached; the book has no measured ground). It adds +67 % at 1-in-10, +27 % at 1-in-100 and
++17 % at 1-in-250.
+
+**Known limitation.** Summed over the tail events, the engine's surge-attributed loss is 0.84× the
+full model's (0.84× out of sample too). The shortfall concentrates in the largest surge events: the
+ten biggest, which are Tampa Bay and Big Bend funnel storms, come out at 0.67×. There the 4′ grid
+under-resolves the bay, and a calibration shared across the coast cannot recover a storm-specific
+funnel response. Two things were tried and did not fix it:
+
+- a per-node random slope (it overfits);
+- a denser intense-storm design (it moved the tail ratio from 0.77 to 0.84).
+
+The total AEP holds within 4 % because wind dominates this book's 1-in-250. The targeted fix is
+*fidelity allocation*: re-run the portfolio's top tail events at full fidelity. That is exactly what
+this validation does, at about 6 s per event.
 
 ---
 

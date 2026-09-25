@@ -242,7 +242,9 @@ These numbers come from the 5,000-location demo book ($16.25bn TIV), with 20,000
 |---|---|
 | Cold start (numba compilation, footprints, ELT, YLT, allocation) | ~20 s |
 | Warm re-run | ~6 s |
-| Hurricane-only run, 10,000 years | ~4 s |
+| Hurricane-only run, 10,000 years (wind) | ~4 s |
+| Hurricane-only run, 10,000 years, with surge, fresh process (low-fidelity surge cached on disk) | ~21 s |
+| First surge run of a catalog (≈3,900 low-fidelity 2-D runs, threaded, then cached) | ~4 min |
 | Reinsurance evaluation | ~15 ms |
 | Sensitivity tornado (13 CRN re-runs and re-weightings) | ~7 s |
 
@@ -251,6 +253,10 @@ These numbers come from the 5,000-location demo book ($16.25bn TIV), with 20,000
 - **Storm surge:** peak coastal water level against the historical record gives a median ratio of
   about 0.96 (Hugo 5.9 vs 6.0 m, Michael 4.9 vs 4.7 m, Sandy 2.7 vs ≈2.9 m). The full table and the
   known sub-grid misses are in the methodology.
+- **Stochastic surge vs the full 2′ model:** the hurricane 1-in-250, surge included, comes out at
+  −3.6 % (1-in-100 −3.4 %, 1-in-500 −4.1 %) on 174 tail events re-run at full fidelity, at about 1/90
+  of the compute. The calibrated two-part correction is unbiased out of sample (held-out depth bias
+  −0.3 %, 0.94–1.01 in every level bin ≥ 1 m). Bay-funnel storms remain under-predicted; see §1.4.
 - **Random fields:** the Vecchia field with m = 30 reproduces Matérn correlations to within 0.013–0.026.
 - **Wind:** the browser and server wind fields agree to about 0.002 m/s.
 
@@ -288,11 +294,11 @@ tests/
 1. **~~Spatially explicit dependence~~ — done** (Vecchia NNGP with per-event closures; §4.2).
    Next: non-stationary ranges (anisotropic along-track TC correlation, basin effects in EQ) and a
    posterior Vecchia conditioned on observed station data, for real-time event response.
-   **~~Surge in the engine~~ — done** (multi-fidelity, §1.4). **Surge next:** subgrid-corrected SWE
-   (Kennedy et al. 2019) in *both* fidelities, to capture bay funnelling (Biscayne, Narragansett) that
-   the site response can only learn where the design set reached. Also wave set-up, and an adaptive
-   design: pick the next full-model runs where the hurdle model's posterior loss variance is largest,
-   i.e. active learning on the tail.
+   **~~Surge in the engine~~ — done** (multi-fidelity, §1.4). **Surge next:** *fidelity allocation*.
+   Re-run a portfolio's top tail events at full fidelity, choosing K by the posterior loss variance of
+   the hurdle model, so the bay-funnel storms that the 4′ grid under-resolves (Tampa Bay: 0.67× on the
+   ten largest) get full-model water. Then subgrid-corrected SWE (Kennedy et al. 2019) in both
+   fidelities, and wave set-up.
 2. **Event-set compression.** Choose a weighted subset of events that preserves the portfolio EP to
    ±x% at chosen return periods. This can be framed as a quadrature or optimal-transport problem on
    the loss distribution, or as loss-based importance sampling with a variance-optimal proposal.

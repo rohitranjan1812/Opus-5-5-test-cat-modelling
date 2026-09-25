@@ -122,7 +122,7 @@ def test_hurdle_depth_is_calibrated_where_connectivity_and_level_separate():
     c = z + 0.05
     g = np.maximum(z, GROUND_MIN)
     zc = np.clip(z, 0, 10)
-    res = {k: cross_validate(k, x, y, c, g, zc, shore, ev, keys) for k in ("hurdle", "tobit")}
+    res = {k: cross_validate(k, x, np.zeros_like(x), y, c, g, zc, shore, ev, keys) for k in ("hurdle", "tobit")}
     deep = x >= 3
     ratio = {k: r["pred"][deep].sum() / r["true"][deep].sum() for k, r in res.items()}
     assert abs(ratio["hurdle"] - 1) < 0.06 and abs(ratio["hurdle"] - 1) < abs(ratio["tobit"] - 1)

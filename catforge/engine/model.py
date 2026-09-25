@@ -120,10 +120,10 @@ class CatModel:
         pwet = np.zeros(pairs.n_pairs, np.float32)
         if rel.size:
             cells = catalog_surge(self.catalogs["TC"], events=rel, progress=progress)
-            x = site_wse(cells, pairs.ev_ptr, pairs.site, lat, lon, co, cal["alpha_m_per_km"], cal["r0_km"],
-                         cal["rmax_km"], ev_idx=rel)
+            x, x_free = (site_wse(cells, pairs.ev_ptr, pairs.site, lat, lon, co, a, cal["r0_km"], cal["rmax_km"],
+                                  ev_idx=rel) for a in (cal["alpha_m_per_km"], 0.0))
             _, zc, shore = site_covariates(lat, lon)
-            lvl, pwet = surge_levels(x, zc[pairs.site], shore[pairs.site], cal)
+            lvl, pwet = surge_levels(x, x_free, zc[pairs.site], shore[pairs.site], cal)
             wse = lvl + site_response(lat, lon, cal)[0][pairs.site].astype(np.float32)
         self._surge[key] = (wse, pwet)
         return wse, pwet

@@ -1,0 +1,1496 @@
+{
+ "n_years": 10000,
+ "n_locations": 5000,
+ "tail_years": 200,
+ "tail_events": 174,
+ "aep": [
+  {
+   "rp": 100,
+   "engine (LF + calibration)": 486514612.75482917,
+   "full model on tail events": 503830096.98581195,
+   "LF, no residual": 478317427.7586465,
+   "wind only": 381879943.3363837,
+   "engine_vs_full": -0.03436770517397336
+  },
+  {
+   "rp": 250,
+   "engine (LF + calibration)": 582156891.9306113,
+   "full model on tail events": 604013255.9624777,
+   "LF, no residual": 582617076.7195946,
+   "wind only": 497270479.1871278,
+   "engine_vs_full": -0.03618523900943027
+  },
+  {
+   "rp": 500,
+   "engine (LF + calibration)": 663759785.3417244,
+   "full model on tail events": 691875062.0245333,
+   "LF, no residual": 647728283.7630439,
+   "wind only": 584760945.0012949,
+   "engine_vs_full": -0.04063634928615467
+  }
+ ],
+ "tail_event_surge_gu_ratio_engine_over_full": 0.8415416941102531,
+ "tail_event_surge_gu_ratio_out_of_design": 0.8375705435138797,
+ "tail_events_in_design": 12,
+ "tail_event_surge_gu_log_ratio_sd": 0.5862420773337428,
+ "seconds_per_event": {
+  "full_2min": 5.761463420144443,
+  "low_fidelity_serial": 0.2423722168494915
+ },
+ "analysis_seconds": 21.2,
+ "engine_surge_summary": {
+  "aal_gu": 26374646.642476775,
+  "tc_aal_gu": 61594537.65369092,
+  "share_of_tc_aal_gu": 0.4281978182994987,
+  "aep": [
+   {
+    "rp": 10,
+    "tc_gu": 164089153.42034614,
+    "tc_gu_wind_only": 98308719.70462358,
+    "surge_gu": 70245558.1676864,
+    "uplift": 0.6691210496216933
+   },
+   {
+    "rp": 25,
+    "tc_gu": 279179804.7174876,
+    "tc_gu_wind_only": 202485792.02103662,
+    "surge_gu": 103674759.73050593,
+    "uplift": 0.3787624402233767
+   },
+   {
+    "rp": 50,
+    "tc_gu": 376606522.58304775,
+    "tc_gu_wind_only": 285220723.47956705,
+    "surge_gu": 129154993.26844084,
+    "uplift": 0.3204037840890881
+   },
+   {
+    "rp": 100,
+    "tc_gu": 486514612.75482917,
+    "tc_gu_wind_only": 381879943.3363837,
+    "surge_gu": 154101677.6896367,
+    "uplift": 0.27399886075262336
+   },
+   {
+    "rp": 250,
+    "tc_gu": 582156891.9306113,
+    "tc_gu_wind_only": 497270479.1871278,
+    "surge_gu": 185985379.492891,
+    "uplift": 0.17070470960239703
+   },
+   {
+    "rp": 500,
+    "tc_gu": 663759785.3417244,
+    "tc_gu_wind_only": 584760945.0012949,
+    "surge_gu": 206190795.69288012,
+    "uplift": 0.1350959584694129
+   },
+   {
+    "rp": 1000,
+    "tc_gu": 781386396.7103937,
+    "tc_gu_wind_only": 654243483.999408,
+    "surge_gu": 230414879.9298185,
+    "uplift": 0.19433577226288534
+   }
+  ],
+  "n_pairs_with_water": 565597,
+  "n_locations_reached": 1604,
+  "n_locations_measured_ground": 0,
+  "n_locations_with_site_response": 1017,
+  "mean_p_wet": 0.714867115020752
+ },
+ "per_event": [
+  {
+   "event": 18,
+   "name": "TC-00019",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 51076571.43231962,
+   "surge_gu_full": 75676290.06999499
+  },
+  {
+   "event": 138,
+   "name": "TC-00139",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 21915070.7958232,
+   "surge_gu_full": 22023261.267547682
+  },
+  {
+   "event": 147,
+   "name": "TC-00148",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 142410104.30157703,
+   "surge_gu_full": 147151125.53525463
+  },
+  {
+   "event": 160,
+   "name": "TC-00161",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 52443573.90192121,
+   "surge_gu_full": 53160714.78787038
+  },
+  {
+   "event": 175,
+   "name": "TC-00176",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 88710689.39588189,
+   "surge_gu_full": 93103099.94590901
+  },
+  {
+   "event": 210,
+   "name": "TC-00211",
+   "occurrences": 8,
+   "in_design": false,
+   "surge_gu_engine": 37638127.74323702,
+   "surge_gu_full": 45261752.863042
+  },
+  {
+   "event": 235,
+   "name": "TC-00236",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 89117113.37916651,
+   "surge_gu_full": 111692286.33422609
+  },
+  {
+   "event": 237,
+   "name": "TC-00238",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 123921048.8708671,
+   "surge_gu_full": 186192663.59727427
+  },
+  {
+   "event": 241,
+   "name": "TC-00242",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 127691503.15959044,
+   "surge_gu_full": 191875208.41659242
+  },
+  {
+   "event": 309,
+   "name": "TC-00310",
+   "occurrences": 7,
+   "in_design": false,
+   "surge_gu_engine": 44338860.42380566,
+   "surge_gu_full": 42721115.86012515
+  },
+  {
+   "event": 313,
+   "name": "TC-00314",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 99930203.32117204,
+   "surge_gu_full": 125099260.30689985
+  },
+  {
+   "event": 319,
+   "name": "TC-00320",
+   "occurrences": 6,
+   "in_design": false,
+   "surge_gu_engine": 14416642.171648368,
+   "surge_gu_full": 7903263.373794604
+  },
+  {
+   "event": 352,
+   "name": "TC-00353",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 79476378.37366617,
+   "surge_gu_full": 75238539.69541453
+  },
+  {
+   "event": 387,
+   "name": "TC-00388",
+   "occurrences": 8,
+   "in_design": false,
+   "surge_gu_engine": 36861313.59147321,
+   "surge_gu_full": 23889420.4665216
+  },
+  {
+   "event": 389,
+   "name": "TC-00390",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 21008555.11683628,
+   "surge_gu_full": 24020803.922608435
+  },
+  {
+   "event": 395,
+   "name": "TC-00396",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 1743309.3788043023,
+   "surge_gu_full": 19288693.350023124
+  },
+  {
+   "event": 477,
+   "name": "TC-00478",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 60749693.364000656,
+   "surge_gu_full": 52055476.22386613
+  },
+  {
+   "event": 545,
+   "name": "TC-00546",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 11592473.779748395,
+   "surge_gu_full": 8519224.985761166
+  },
+  {
+   "event": 559,
+   "name": "TC-00560",
+   "occurrences": 5,
+   "in_design": true,
+   "surge_gu_engine": 193422037.2454289,
+   "surge_gu_full": 206138348.90268683
+  },
+  {
+   "event": 589,
+   "name": "TC-00590",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 111220761.33334056,
+   "surge_gu_full": 98902214.08101305
+  },
+  {
+   "event": 634,
+   "name": "TC-00635",
+   "occurrences": 6,
+   "in_design": false,
+   "surge_gu_engine": 20467110.416336846,
+   "surge_gu_full": 31105864.09724742
+  },
+  {
+   "event": 646,
+   "name": "TC-00647",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 16181841.121651337,
+   "surge_gu_full": 8302527.666932918
+  },
+  {
+   "event": 655,
+   "name": "TC-00656",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 60241095.51364812,
+   "surge_gu_full": 73594954.33181131
+  },
+  {
+   "event": 730,
+   "name": "TC-00731",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 26258267.15654115,
+   "surge_gu_full": 36272596.77289917
+  },
+  {
+   "event": 755,
+   "name": "TC-00756",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 52541531.81609084,
+   "surge_gu_full": 28243380.62047065
+  },
+  {
+   "event": 768,
+   "name": "TC-00769",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 39719722.28522944,
+   "surge_gu_full": 30775382.931536235
+  },
+  {
+   "event": 795,
+   "name": "TC-00796",
+   "occurrences": 12,
+   "in_design": false,
+   "surge_gu_engine": 64593347.427135326,
+   "surge_gu_full": 76392483.43800512
+  },
+  {
+   "event": 831,
+   "name": "TC-00832",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 63159162.10739387,
+   "surge_gu_full": 63627869.08847841
+  },
+  {
+   "event": 898,
+   "name": "TC-00899",
+   "occurrences": 6,
+   "in_design": false,
+   "surge_gu_engine": 22753285.113670588,
+   "surge_gu_full": 21649141.727678124
+  },
+  {
+   "event": 899,
+   "name": "TC-00900",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 17908644.40734575,
+   "surge_gu_full": 6743655.570479551
+  },
+  {
+   "event": 904,
+   "name": "TC-00905",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 8596834.030351534,
+   "surge_gu_full": 3017462.224486383
+  },
+  {
+   "event": 922,
+   "name": "TC-00923",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 20902946.508071642,
+   "surge_gu_full": 15323772.240768185
+  },
+  {
+   "event": 942,
+   "name": "TC-00943",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 113221411.54759552,
+   "surge_gu_full": 121742455.69030452
+  },
+  {
+   "event": 956,
+   "name": "TC-00957",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 99463644.58128212,
+   "surge_gu_full": 123613487.0863781
+  },
+  {
+   "event": 992,
+   "name": "TC-00993",
+   "occurrences": 10,
+   "in_design": true,
+   "surge_gu_engine": 46562075.78025267,
+   "surge_gu_full": 92203880.06539048
+  },
+  {
+   "event": 1032,
+   "name": "TC-01033",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 16306566.970393742,
+   "surge_gu_full": 8711587.117644142
+  },
+  {
+   "event": 1070,
+   "name": "TC-01071",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 18462825.852334566,
+   "surge_gu_full": 19181126.938373774
+  },
+  {
+   "event": 1109,
+   "name": "TC-01110",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 51934572.805961,
+   "surge_gu_full": 48952325.298414886
+  },
+  {
+   "event": 1113,
+   "name": "TC-01114",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 98544623.8365871,
+   "surge_gu_full": 110240971.22621664
+  },
+  {
+   "event": 1121,
+   "name": "TC-01122",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 131293346.68718085,
+   "surge_gu_full": 212797883.01356122
+  },
+  {
+   "event": 1134,
+   "name": "TC-01135",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 1482584.71997507,
+   "surge_gu_full": 43863218.12818992
+  },
+  {
+   "event": 1178,
+   "name": "TC-01179",
+   "occurrences": 11,
+   "in_design": false,
+   "surge_gu_engine": 95064966.90263678,
+   "surge_gu_full": 107362615.97606787
+  },
+  {
+   "event": 1266,
+   "name": "TC-01267",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 73576461.40507439,
+   "surge_gu_full": 57340343.1754739
+  },
+  {
+   "event": 1271,
+   "name": "TC-01272",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 53012350.580108605,
+   "surge_gu_full": 47596224.95581491
+  },
+  {
+   "event": 1322,
+   "name": "TC-01323",
+   "occurrences": 6,
+   "in_design": false,
+   "surge_gu_engine": 31692129.27832453,
+   "surge_gu_full": 45183631.87286327
+  },
+  {
+   "event": 1337,
+   "name": "TC-01338",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 27667871.395521972,
+   "surge_gu_full": 80332480.3046097
+  },
+  {
+   "event": 1401,
+   "name": "TC-01402",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 80310868.09374467,
+   "surge_gu_full": 112263673.79290584
+  },
+  {
+   "event": 1428,
+   "name": "TC-01429",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 92834790.83026177,
+   "surge_gu_full": 103047332.84862025
+  },
+  {
+   "event": 1430,
+   "name": "TC-01431",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 56719641.70347711,
+   "surge_gu_full": 53898739.689850636
+  },
+  {
+   "event": 1431,
+   "name": "TC-01432",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 90284149.9027649,
+   "surge_gu_full": 109747464.64235376
+  },
+  {
+   "event": 1444,
+   "name": "TC-01445",
+   "occurrences": 9,
+   "in_design": false,
+   "surge_gu_engine": 8090921.934735568,
+   "surge_gu_full": 2405416.1533979354
+  },
+  {
+   "event": 1455,
+   "name": "TC-01456",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 109871193.95498697,
+   "surge_gu_full": 109239806.21109745
+  },
+  {
+   "event": 1459,
+   "name": "TC-01460",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 131578681.74206801,
+   "surge_gu_full": 166406991.0794194
+  },
+  {
+   "event": 1522,
+   "name": "TC-01523",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 35391886.286319666,
+   "surge_gu_full": 28724374.315877974
+  },
+  {
+   "event": 1571,
+   "name": "TC-01572",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 99518629.91820058,
+   "surge_gu_full": 115615881.60557374
+  },
+  {
+   "event": 1595,
+   "name": "TC-01596",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 23327013.57830186,
+   "surge_gu_full": 22565710.244269352
+  },
+  {
+   "event": 1597,
+   "name": "TC-01598",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 47283957.45005093,
+   "surge_gu_full": 36580030.318814486
+  },
+  {
+   "event": 1603,
+   "name": "TC-01604",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 94693686.94555749,
+   "surge_gu_full": 99007020.73000246
+  },
+  {
+   "event": 1605,
+   "name": "TC-01606",
+   "occurrences": 14,
+   "in_design": true,
+   "surge_gu_engine": 44444621.01006747,
+   "surge_gu_full": 47084942.17229746
+  },
+  {
+   "event": 1662,
+   "name": "TC-01663",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 70148159.75581945,
+   "surge_gu_full": 108619134.26868837
+  },
+  {
+   "event": 1683,
+   "name": "TC-01684",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 99868724.49483424,
+   "surge_gu_full": 85247309.99654031
+  },
+  {
+   "event": 1700,
+   "name": "TC-01701",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 34190548.42201897,
+   "surge_gu_full": 29452814.37294527
+  },
+  {
+   "event": 1723,
+   "name": "TC-01724",
+   "occurrences": 6,
+   "in_design": false,
+   "surge_gu_engine": 9652237.960166328,
+   "surge_gu_full": 6514104.317711685
+  },
+  {
+   "event": 1763,
+   "name": "TC-01764",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 10687848.131558646,
+   "surge_gu_full": 12151185.294239886
+  },
+  {
+   "event": 1829,
+   "name": "TC-01830",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 100566904.20078492,
+   "surge_gu_full": 115463079.76652782
+  },
+  {
+   "event": 1840,
+   "name": "TC-01841",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 143432465.7060188,
+   "surge_gu_full": 170720345.75462526
+  },
+  {
+   "event": 1841,
+   "name": "TC-01842",
+   "occurrences": 3,
+   "in_design": true,
+   "surge_gu_engine": 78363522.54132427,
+   "surge_gu_full": 92596588.2579217
+  },
+  {
+   "event": 1853,
+   "name": "TC-01854",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 42670540.9590056,
+   "surge_gu_full": 29528608.004982766
+  },
+  {
+   "event": 1856,
+   "name": "TC-01857",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 113497038.94661573,
+   "surge_gu_full": 152469141.08093506
+  },
+  {
+   "event": 1858,
+   "name": "TC-01859",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 53002641.11360172,
+   "surge_gu_full": 59890098.14144232
+  },
+  {
+   "event": 1871,
+   "name": "TC-01872",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 114599655.77470852,
+   "surge_gu_full": 115378646.93850183
+  },
+  {
+   "event": 1875,
+   "name": "TC-01876",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 53720329.44334473,
+   "surge_gu_full": 58595043.18469858
+  },
+  {
+   "event": 1914,
+   "name": "TC-01915",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 19241389.18661418,
+   "surge_gu_full": 10546023.69587002
+  },
+  {
+   "event": 1945,
+   "name": "TC-01946",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 3455099.0018167123,
+   "surge_gu_full": 14825422.136726532
+  },
+  {
+   "event": 1972,
+   "name": "TC-01973",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 86628114.06733474,
+   "surge_gu_full": 78665503.9550876
+  },
+  {
+   "event": 1989,
+   "name": "TC-01990",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 58818742.13319929,
+   "surge_gu_full": 59481028.51505433
+  },
+  {
+   "event": 1993,
+   "name": "TC-01994",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 129068205.475171,
+   "surge_gu_full": 146716489.27989176
+  },
+  {
+   "event": 1995,
+   "name": "TC-01996",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 98524453.14763644,
+   "surge_gu_full": 111813331.2976553
+  },
+  {
+   "event": 2008,
+   "name": "TC-02009",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 17327402.8283657,
+   "surge_gu_full": 6579613.276771131
+  },
+  {
+   "event": 2018,
+   "name": "TC-02019",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 100166013.92606625,
+   "surge_gu_full": 110165934.87736964
+  },
+  {
+   "event": 2032,
+   "name": "TC-02033",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 55336323.59701664,
+   "surge_gu_full": 56812152.76612455
+  },
+  {
+   "event": 2037,
+   "name": "TC-02038",
+   "occurrences": 7,
+   "in_design": true,
+   "surge_gu_engine": 62283155.29309816,
+   "surge_gu_full": 67915589.81168531
+  },
+  {
+   "event": 2046,
+   "name": "TC-02047",
+   "occurrences": 7,
+   "in_design": false,
+   "surge_gu_engine": 129699473.63660192,
+   "surge_gu_full": 117074164.22945152
+  },
+  {
+   "event": 2137,
+   "name": "TC-02138",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 6723581.067861665,
+   "surge_gu_full": 5960017.935119042
+  },
+  {
+   "event": 2151,
+   "name": "TC-02152",
+   "occurrences": 8,
+   "in_design": false,
+   "surge_gu_engine": 53380407.557145044,
+   "surge_gu_full": 53583151.532249704
+  },
+  {
+   "event": 2152,
+   "name": "TC-02153",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 69716085.74936144,
+   "surge_gu_full": 65728500.62883674
+  },
+  {
+   "event": 2157,
+   "name": "TC-02158",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 145248953.70245507,
+   "surge_gu_full": 203560926.8128975
+  },
+  {
+   "event": 2204,
+   "name": "TC-02205",
+   "occurrences": 14,
+   "in_design": false,
+   "surge_gu_engine": 9624258.075660404,
+   "surge_gu_full": 5843525.2958342675
+  },
+  {
+   "event": 2221,
+   "name": "TC-02222",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 65826178.83675476,
+   "surge_gu_full": 65315512.71232657
+  },
+  {
+   "event": 2227,
+   "name": "TC-02228",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 41803591.74512141,
+   "surge_gu_full": 38198282.639019795
+  },
+  {
+   "event": 2286,
+   "name": "TC-02287",
+   "occurrences": 5,
+   "in_design": true,
+   "surge_gu_engine": 74057730.5247946,
+   "surge_gu_full": 63513215.09075718
+  },
+  {
+   "event": 2325,
+   "name": "TC-02326",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 79938771.43828386,
+   "surge_gu_full": 168149682.16152576
+  },
+  {
+   "event": 2351,
+   "name": "TC-02352",
+   "occurrences": 7,
+   "in_design": true,
+   "surge_gu_engine": 37975336.485222585,
+   "surge_gu_full": 40505450.927892044
+  },
+  {
+   "event": 2420,
+   "name": "TC-02421",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 8012508.84392558,
+   "surge_gu_full": 82211893.70680541
+  },
+  {
+   "event": 2434,
+   "name": "TC-02435",
+   "occurrences": 3,
+   "in_design": true,
+   "surge_gu_engine": 97941244.41233309,
+   "surge_gu_full": 135033825.4276217
+  },
+  {
+   "event": 2465,
+   "name": "TC-02466",
+   "occurrences": 8,
+   "in_design": false,
+   "surge_gu_engine": 135973580.13045365,
+   "surge_gu_full": 199520960.80576912
+  },
+  {
+   "event": 2467,
+   "name": "TC-02468",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 25537122.836537,
+   "surge_gu_full": 33490486.14626454
+  },
+  {
+   "event": 2468,
+   "name": "TC-02469",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 24588669.692308653,
+   "surge_gu_full": 117499345.25504918
+  },
+  {
+   "event": 2473,
+   "name": "TC-02474",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 4722081.540544883,
+   "surge_gu_full": 5805856.304555671
+  },
+  {
+   "event": 2487,
+   "name": "TC-02488",
+   "occurrences": 7,
+   "in_design": false,
+   "surge_gu_engine": 46363021.816060446,
+   "surge_gu_full": 51776736.16846947
+  },
+  {
+   "event": 2498,
+   "name": "TC-02499",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 19893419.397593964,
+   "surge_gu_full": 23336836.14434109
+  },
+  {
+   "event": 2525,
+   "name": "TC-02526",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 31485439.18589512,
+   "surge_gu_full": 29667300.06271456
+  },
+  {
+   "event": 2530,
+   "name": "TC-02531",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 50639128.21227935,
+   "surge_gu_full": 40853063.21229678
+  },
+  {
+   "event": 2539,
+   "name": "TC-02540",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 35088327.28399121,
+   "surge_gu_full": 33041548.189780638
+  },
+  {
+   "event": 2576,
+   "name": "TC-02577",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 106354833.33412987,
+   "surge_gu_full": 166805995.35361442
+  },
+  {
+   "event": 2609,
+   "name": "TC-02610",
+   "occurrences": 7,
+   "in_design": false,
+   "surge_gu_engine": 128499288.05331947,
+   "surge_gu_full": 193455794.693573
+  },
+  {
+   "event": 2615,
+   "name": "TC-02616",
+   "occurrences": 7,
+   "in_design": true,
+   "surge_gu_engine": 80459402.67372994,
+   "surge_gu_full": 73931690.81303942
+  },
+  {
+   "event": 2640,
+   "name": "TC-02641",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 9835018.756839108,
+   "surge_gu_full": 6482708.125763611
+  },
+  {
+   "event": 2678,
+   "name": "TC-02679",
+   "occurrences": 7,
+   "in_design": false,
+   "surge_gu_engine": 57846791.66169932,
+   "surge_gu_full": 47218714.97388867
+  },
+  {
+   "event": 2711,
+   "name": "TC-02712",
+   "occurrences": 7,
+   "in_design": false,
+   "surge_gu_engine": 34390493.84042876,
+   "surge_gu_full": 24587068.345900636
+  },
+  {
+   "event": 2746,
+   "name": "TC-02747",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 65420014.04165982,
+   "surge_gu_full": 81066566.6239247
+  },
+  {
+   "event": 2757,
+   "name": "TC-02758",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 6091453.925866602,
+   "surge_gu_full": 9943713.429836508
+  },
+  {
+   "event": 2777,
+   "name": "TC-02778",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 71808567.97650987,
+   "surge_gu_full": 106193013.89649397
+  },
+  {
+   "event": 2788,
+   "name": "TC-02789",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 61330610.35672583,
+   "surge_gu_full": 68100475.63340771
+  },
+  {
+   "event": 2886,
+   "name": "TC-02887",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 90684555.95183235,
+   "surge_gu_full": 109860437.08459865
+  },
+  {
+   "event": 2887,
+   "name": "TC-02888",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 91343686.43741666,
+   "surge_gu_full": 108373001.0645108
+  },
+  {
+   "event": 2904,
+   "name": "TC-02905",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 126455975.46696328,
+   "surge_gu_full": 166321909.9012926
+  },
+  {
+   "event": 2938,
+   "name": "TC-02939",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 47782151.520445235,
+   "surge_gu_full": 44800401.60793554
+  },
+  {
+   "event": 2940,
+   "name": "TC-02941",
+   "occurrences": 7,
+   "in_design": false,
+   "surge_gu_engine": 9643234.33689173,
+   "surge_gu_full": 2063207.938487163
+  },
+  {
+   "event": 2960,
+   "name": "TC-02961",
+   "occurrences": 8,
+   "in_design": false,
+   "surge_gu_engine": 14258254.2464475,
+   "surge_gu_full": 11384482.417715378
+  },
+  {
+   "event": 2966,
+   "name": "TC-02967",
+   "occurrences": 8,
+   "in_design": false,
+   "surge_gu_engine": 75910119.04814668,
+   "surge_gu_full": 94872446.56603077
+  },
+  {
+   "event": 2972,
+   "name": "TC-02973",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 48003217.30322926,
+   "surge_gu_full": 40724870.09620315
+  },
+  {
+   "event": 3010,
+   "name": "TC-03011",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 144352414.28089702,
+   "surge_gu_full": 169473148.55040324
+  },
+  {
+   "event": 3027,
+   "name": "TC-03028",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 86099881.4349966,
+   "surge_gu_full": 137545472.42731217
+  },
+  {
+   "event": 3031,
+   "name": "TC-03032",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 261454285.37196058,
+   "surge_gu_full": 359164378.88834864
+  },
+  {
+   "event": 3078,
+   "name": "TC-03079",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 72025485.31110343,
+   "surge_gu_full": 67801521.75205776
+  },
+  {
+   "event": 3110,
+   "name": "TC-03111",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 25347072.052178096,
+   "surge_gu_full": 38126311.16409801
+  },
+  {
+   "event": 3129,
+   "name": "TC-03130",
+   "occurrences": 7,
+   "in_design": false,
+   "surge_gu_engine": 59975943.435705885,
+   "surge_gu_full": 57749653.226491176
+  },
+  {
+   "event": 3140,
+   "name": "TC-03141",
+   "occurrences": 6,
+   "in_design": false,
+   "surge_gu_engine": 161584230.05708706,
+   "surge_gu_full": 241629513.1578696
+  },
+  {
+   "event": 3153,
+   "name": "TC-03154",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 7456948.4946656665,
+   "surge_gu_full": 2482610.2862046417
+  },
+  {
+   "event": 3160,
+   "name": "TC-03161",
+   "occurrences": 9,
+   "in_design": false,
+   "surge_gu_engine": 52279251.13743917,
+   "surge_gu_full": 52218848.79538418
+  },
+  {
+   "event": 3169,
+   "name": "TC-03170",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 88181841.91614868,
+   "surge_gu_full": 107422695.92503053
+  },
+  {
+   "event": 3202,
+   "name": "TC-03203",
+   "occurrences": 1,
+   "in_design": true,
+   "surge_gu_engine": 61039431.29533517,
+   "surge_gu_full": 69743416.45354594
+  },
+  {
+   "event": 3207,
+   "name": "TC-03208",
+   "occurrences": 8,
+   "in_design": false,
+   "surge_gu_engine": 49552912.95182498,
+   "surge_gu_full": 57336677.31797199
+  },
+  {
+   "event": 3209,
+   "name": "TC-03210",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 3731667.8841491337,
+   "surge_gu_full": 2984616.131914401
+  },
+  {
+   "event": 3241,
+   "name": "TC-03242",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 11349024.033041328,
+   "surge_gu_full": 11219765.98590394
+  },
+  {
+   "event": 3242,
+   "name": "TC-03243",
+   "occurrences": 7,
+   "in_design": false,
+   "surge_gu_engine": 78512732.25916278,
+   "surge_gu_full": 101488699.98839284
+  },
+  {
+   "event": 3255,
+   "name": "TC-03256",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 70805790.31152208,
+   "surge_gu_full": 126732063.06827824
+  },
+  {
+   "event": 3312,
+   "name": "TC-03313",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 18159918.57528027,
+   "surge_gu_full": 19670869.63977024
+  },
+  {
+   "event": 3318,
+   "name": "TC-03319",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 14252812.722892838,
+   "surge_gu_full": 14217268.586060485
+  },
+  {
+   "event": 3328,
+   "name": "TC-03329",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 60529165.543480136,
+   "surge_gu_full": 46450514.70527929
+  },
+  {
+   "event": 3358,
+   "name": "TC-03359",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 65527036.35654888,
+   "surge_gu_full": 55563785.938475706
+  },
+  {
+   "event": 3384,
+   "name": "TC-03385",
+   "occurrences": 11,
+   "in_design": false,
+   "surge_gu_engine": 46104073.20329077,
+   "surge_gu_full": 43172736.80714662
+  },
+  {
+   "event": 3426,
+   "name": "TC-03427",
+   "occurrences": 2,
+   "in_design": true,
+   "surge_gu_engine": 84836619.23906569,
+   "surge_gu_full": 77996646.18672267
+  },
+  {
+   "event": 3441,
+   "name": "TC-03442",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 64010623.57395506,
+   "surge_gu_full": 70479934.09629571
+  },
+  {
+   "event": 3450,
+   "name": "TC-03451",
+   "occurrences": 6,
+   "in_design": false,
+   "surge_gu_engine": 63771553.22907581,
+   "surge_gu_full": 69815110.64874797
+  },
+  {
+   "event": 3453,
+   "name": "TC-03454",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 160626033.27880886,
+   "surge_gu_full": 146734527.4536463
+  },
+  {
+   "event": 3499,
+   "name": "TC-03500",
+   "occurrences": 9,
+   "in_design": false,
+   "surge_gu_engine": 121094187.13407604,
+   "surge_gu_full": 114929810.6332859
+  },
+  {
+   "event": 3507,
+   "name": "TC-03508",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 166378988.73273757,
+   "surge_gu_full": 214760140.77727443
+  },
+  {
+   "event": 3511,
+   "name": "TC-03512",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 10519539.000636598,
+   "surge_gu_full": 4161099.178492032
+  },
+  {
+   "event": 3580,
+   "name": "TC-03581",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 10206020.103273546,
+   "surge_gu_full": 5760914.542728143
+  },
+  {
+   "event": 3622,
+   "name": "TC-03623",
+   "occurrences": 2,
+   "in_design": false,
+   "surge_gu_engine": 112543766.68106484,
+   "surge_gu_full": 237668497.54450393
+  },
+  {
+   "event": 3642,
+   "name": "TC-03643",
+   "occurrences": 8,
+   "in_design": false,
+   "surge_gu_engine": 2109211.1034410303,
+   "surge_gu_full": 54125631.85610989
+  },
+  {
+   "event": 3646,
+   "name": "TC-03647",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 81147990.63035876,
+   "surge_gu_full": 192654154.94680822
+  },
+  {
+   "event": 3653,
+   "name": "TC-03654",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 97980928.58893245,
+   "surge_gu_full": 131919324.59396
+  },
+  {
+   "event": 3658,
+   "name": "TC-03659",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 78338529.05530122,
+   "surge_gu_full": 97973565.14112355
+  },
+  {
+   "event": 3661,
+   "name": "TC-03662",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 42847109.34254848,
+   "surge_gu_full": 34428262.36471018
+  },
+  {
+   "event": 3679,
+   "name": "TC-03680",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 53128183.02617216,
+   "surge_gu_full": 45937028.45219546
+  },
+  {
+   "event": 3749,
+   "name": "TC-03750",
+   "occurrences": 5,
+   "in_design": false,
+   "surge_gu_engine": 37637126.537844524,
+   "surge_gu_full": 30486044.72941497
+  },
+  {
+   "event": 3773,
+   "name": "TC-03774",
+   "occurrences": 6,
+   "in_design": false,
+   "surge_gu_engine": 63007957.065634996,
+   "surge_gu_full": 59407885.106188625
+  },
+  {
+   "event": 3781,
+   "name": "TC-03782",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 137361647.03309956,
+   "surge_gu_full": 181305986.05999923
+  },
+  {
+   "event": 3783,
+   "name": "TC-03784",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 63922124.162882164,
+   "surge_gu_full": 76751956.24253502
+  },
+  {
+   "event": 3791,
+   "name": "TC-03792",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 8952430.226981467,
+   "surge_gu_full": 10868925.893774109
+  },
+  {
+   "event": 3796,
+   "name": "TC-03797",
+   "occurrences": 6,
+   "in_design": false,
+   "surge_gu_engine": 56791018.12148908,
+   "surge_gu_full": 49796255.121360004
+  },
+  {
+   "event": 3826,
+   "name": "TC-03827",
+   "occurrences": 11,
+   "in_design": false,
+   "surge_gu_engine": 4991912.987010334,
+   "surge_gu_full": 2423641.804016433
+  },
+  {
+   "event": 3889,
+   "name": "TC-03890",
+   "occurrences": 8,
+   "in_design": false,
+   "surge_gu_engine": 63737041.506784044,
+   "surge_gu_full": 46695354.035265364
+  },
+  {
+   "event": 3907,
+   "name": "TC-03908",
+   "occurrences": 4,
+   "in_design": false,
+   "surge_gu_engine": 9505966.59153587,
+   "surge_gu_full": 4009863.9136753515
+  },
+  {
+   "event": 3929,
+   "name": "TC-03930",
+   "occurrences": 3,
+   "in_design": false,
+   "surge_gu_engine": 14548366.248334838,
+   "surge_gu_full": 15051267.045999855
+  },
+  {
+   "event": 3933,
+   "name": "TC-03934",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 65530270.45803618,
+   "surge_gu_full": 58289336.957862005
+  },
+  {
+   "event": 3950,
+   "name": "TC-03951",
+   "occurrences": 2,
+   "in_design": true,
+   "surge_gu_engine": 17735982.822820254,
+   "surge_gu_full": 22259116.570618577
+  },
+  {
+   "event": 3970,
+   "name": "TC-03971",
+   "occurrences": 6,
+   "in_design": false,
+   "surge_gu_engine": 13557671.430137523,
+   "surge_gu_full": 7308826.404794961
+  },
+  {
+   "event": 3979,
+   "name": "TC-03980",
+   "occurrences": 6,
+   "in_design": false,
+   "surge_gu_engine": 17572963.370398957,
+   "surge_gu_full": 49363440.79536441
+  },
+  {
+   "event": 3998,
+   "name": "TC-03999",
+   "occurrences": 1,
+   "in_design": false,
+   "surge_gu_engine": 71950824.25067978,
+   "surge_gu_full": 71359017.92870949
+  },
+  {
+   "event": 3999,
+   "name": "TC-04000",
+   "occurrences": 6,
+   "in_design": false,
+   "surge_gu_engine": 65374644.992662035,
+   "surge_gu_full": 65879463.88856613
+  }
+ ]
+}

@@ -11,6 +11,8 @@
    the connectivity draw are switched off, because the full model is the reference. The occurrence keys are unchanged, so wind
    damage uses common random numbers and only the surge differs.
 5. Compares the hurricane AEP (ground-up) at 100/250/500 years, and each tail event's mean surge loss.
+   Tail storms that were also calibration design storms are flagged; the surge ratio is reported for
+   the rest too (out of sample).
 
 Writes ``docs/validation/surge_tail.json``.
 """
@@ -29,7 +31,7 @@ from catforge.analytics.ep import quantile_at_rp
 from catforge.config import PERIL_INDEX
 from catforge.engine.model import AnalysisConfig, CatModel
 from catforge.exposure.synthetic import generate_portfolio
-from catforge.hazard.surge import _tracks, coastal_mask, lf_event_cells
+from catforge.hazard.surge import _tracks, cache_dir, coastal_mask, lf_event_cells
 from catforge.physics.surge2d import run_surge
 
 OUT = Path(__file__).resolve().parent.parent / "docs" / "validation" / "surge_tail.json"
@@ -115,19 +117,31 @@ def main():
         rows.append(row)
         print(f"RP {rp}: " + ", ".join(f"{k} {v / 1e6:,.1f}m" for k, v in row.items() if isinstance(v, float) and k != "engine_vs_full")
               + f" → engine vs full {row['engine_vs_full']:+.1%}", flush=True)
+    # storms that were also in the calibration design are in-sample for the site response
+    design = set()
+    if (cache_dir() / "calibration_pairs.npz").exists():
+        with np.load(cache_dir() / "calibration_pairs.npz") as z:
+            design = {int(n.split(":")[1]) for n in z["names"].astype(str) if n.startswith("cat:")}
     per_event = []
     for e in tail_ev:
         m = ylt.event == e
+        ci = int(ctx.events["cat_index"].iloc[e])
         per_event.append({"event": int(e), "name": str(ctx.events["name"].iloc[e]), "occurrences": int(m.sum()),
+                          "in_design": ci in design,
                           "surge_gu_engine": float(occ_s[m].mean()), "surge_gu_full": float(s_hf[m].mean())})
     se = np.array([p["surge_gu_engine"] for p in per_event])
     sf = np.array([p["surge_gu_full"] for p in per_event])
+    ind = np.array([p["in_design"] for p in per_event], bool)
     summary = {
         "n_years": n, "n_locations": pf.n, "tail_years": int(tail_years.size), "tail_events": int(tail_ev.size),
         "aep": rows,
         "tail_event_surge_gu_ratio_engine_over_full": float(se.sum() / max(sf.sum(), 1.0)),
+        "tail_event_surge_gu_ratio_out_of_design": float(se[~ind].sum() / max(sf[~ind].sum(), 1.0)),
+        "tail_events_in_design": int(ind.sum()),
         "tail_event_surge_gu_log_ratio_sd": float(np.std(np.log((se + 1e5) / (sf + 1e5)))),
         "seconds_per_event": {"full_2min": t_hf / max(tail_ev.size, 1), "low_fidelity_serial": t_lf / max(tail_ev.size, 1)},
+        "analysis_seconds": round(t_run, 1),
+        "engine_surge_summary": {k: v for k, v in res.extras.get("surge", {}).items() if k != "model"},
         "per_event": per_event,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)

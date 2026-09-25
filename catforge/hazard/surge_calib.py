@@ -6,23 +6,27 @@ the stencil) or a level y. Two physically distinct processes decide the outcome:
 
 - **connectivity** — whether the water body reaches the node at all (barriers, sheltered basins,
   channels a 4′ grid cannot see). This is a logistic model:
-  ``P(wet) = σ(θ · [1, x, z, shore, x·z, x − z, (x − z)₊])``.
+  ``P(wet) = σ(θ · [1, x, z, shore, x·z, x − z, (x − z)₊, Δ, Δ·shore])``.
 - **level given wet** — a linear mixed model with crossed random effects:
-  ``y = s(x) + γ · [shore, z, x·shore, x·z] + u_e + δ_n + ε``,
+  ``y = s(x) + γ · [shore, z, x·shore, x·z, Δ, Δ·shore, min(Δ, 3)·x] + u_e + δ_n + ε``,
   where s is a linear spline, u_e ~ N(0, σ_e²) an event term, δ_n ~ N(0, τ²) a persistent **site
   response** (the harbour/bay term, the surge analogue of a Vs30 site term), and ε ~ N(0, σ²).
 
 Here x is the low-fidelity site level, z the node's 2′ ground (clipped to 0…10 m), and shore = 1 when
-the stencil touches the sea. The expected flood depth over building ground g is then:
+the stencil touches the sea. Δ = x(α = 0) − x is the friction loss the site rule applied. A bay
+carries distant water over water, where it amplifies instead of attenuating, and Δ lets the model
+learn that. It cuts held-out depth RMSE in water over 1 m deep by 8 %. A per-node random *slope* on x
+was tried instead: with two or three big storms per bay it overfits, and held-out error rises. The expected flood depth over building ground g is then:
 
     E[max(ζ − g, 0)] = P(wet) · E_N[max(y − g, 0)]
 
 **Why not a single censored (Tobit) model?** A Tobit assumes one latent Gaussian decides both
 connectivity and level. The calibration data reject that assumption. Where x ≥ 2 m, the held-out
 residuals have a positive median, skew −0.8 to −2.1 and excess kurtosis 3–7, because connected nodes
-sit above the fit and sheltered ones far below it. On the final design set (93 events, 103k
-node-events), a pooled Gaussian understates held-out flood depth by 22–36 % where x ≥ 2 m, and by
-40–93 % on ground above 2 m. The hurdle model stays within ±5 % in every bin with x ≥ 2 m.
+sit above the fit and sheltered ones far below it. On the design set (224 storms, 237k
+node-events with low-fidelity water), a pooled Gaussian understates held-out flood depth by 20–35 %
+where x ≥ 2 m, and by 33–90 % on ground above 2 m. The hurdle model stays within 0.94–1.01 in every
+bin with x ≥ 1 m.
 
 A naive OLS on wet-in-both pairs is not a fix either: it is a truncated sample, which biases the
 intercept up and flattens the slope. ``calibrate`` reports all three models side by side.
@@ -140,31 +144,31 @@ def _lookup(keys_fit, values, keys, default):
 
 
 # ------------------------------------------------------------------------------------------ models
-def fit_hurdle(x, y, zc, shore, ev, keys, knots=KNOTS) -> dict:
+def fit_hurdle(x, dlt, y, zc, shore, ev, keys, knots=KNOTS) -> dict:
     """The engine's model: logistic connectivity × wet-level crossed mixed model."""
     wet = np.isfinite(y)
-    theta = logit_fit(wet_features(x, zc, shore), wet.astype(float))
+    theta = logit_fit(wet_features(x, dlt, zc, shore), wet.astype(float))
     nk, ninv = _dense(keys[wet])
     _, einv = _dense(ev[wet])
     knots = tuple(k for k in knots if np.sum(x[wet] > k) >= 50)  # a knot needs data beyond it
-    p = fit_mixed(level_design(x[wet], zc[wet], shore[wet], knots), y[wet], einv, ninv)
+    p = fit_mixed(level_design(x[wet], dlt[wet], zc[wet], shore[wet], knots), y[wet], einv, ninv)
     return {"theta": theta, "beta": p["beta"], "knots": knots, "sigma": p["sigma"], "sigma_event": p["sigma_event"],
             "tau": p["tau"], "site_key": nk, "delta": p["delta"], "pv_delta": p["pv_delta"], "m_node": p["m_node"],
             "iterations": p["iterations"]}
 
 
-def predict_hurdle(m: dict, x, zc, shore, keys, g) -> np.ndarray:
-    pw = expit(wet_features(x, zc, shore) @ m["theta"])
+def predict_hurdle(m: dict, x, dlt, zc, shore, keys, g) -> np.ndarray:
+    pw = expit(wet_features(x, dlt, zc, shore) @ m["theta"])
     dl = _lookup(m["site_key"], m["delta"], keys, 0.0)
     pv = _lookup(m["site_key"], m["pv_delta"], keys, m["tau"] ** 2)
-    mu = level_design(x, zc, shore, m["knots"]) @ m["beta"] + dl
+    mu = level_design(x, dlt, zc, shore, m["knots"]) @ m["beta"] + dl
     return pw * expected_depth(mu, np.sqrt(m["sigma"] ** 2 + m["sigma_event"] ** 2 + pv), g)
 
 
-def _fit_predict(kind, tr, te, x, y, c, g, zc, shore, ev, keys):
+def _fit_predict(kind, tr, te, x, dlt, y, c, g, zc, shore, ev, keys):
     if kind == "hurdle":
-        return predict_hurdle(fit_hurdle(x[tr], y[tr], zc[tr], shore[tr], ev[tr], keys[tr]),
-                              x[te], zc[te], shore[te], keys[te], g[te])
+        return predict_hurdle(fit_hurdle(x[tr], dlt[tr], y[tr], zc[tr], shore[tr], ev[tr], keys[tr]),
+                              x[te], dlt[te], zc[te], shore[te], keys[te], g[te])
     if kind == "naive":
         p = naive_fit(x[tr], y[tr])
         return expected_depth(p["a"] + p["b"] * x[te], p["sigma"], g[te])
@@ -178,17 +182,19 @@ def _fit_predict(kind, tr, te, x, y, c, g, zc, shore, ev, keys):
     return expected_depth(mu, np.sqrt(p["sigma"] ** 2 + p["sigma_event"] ** 2 + pv), g[te])
 
 
-def cross_validate(kind, x, y, c, g, zc, shore, ev, keys, folds: int = 5, seed: int = 0) -> dict:
+def cross_validate(kind, x, dlt, y, c, g, zc, shore, ev, keys, folds: int = 5, seed: int = 0) -> dict:
     """Event-grouped K-fold: fit on the other events, predict E[depth] on the held-out ones."""
     ue = np.unique(ev)
     f_of = dict(zip(ue, np.random.default_rng(seed).permutation(np.arange(ue.size) % folds)))
     fold = np.array([f_of[e] for e in ev])
     pred = np.zeros(x.size)
     for f in range(folds):
-        pred[fold == f] = _fit_predict(kind, fold != f, fold == f, x, y, c, g, zc, shore, ev, keys)
+        pred[fold == f] = _fit_predict(kind, fold != f, fold == f, x, dlt, y, c, g, zc, shore, ev, keys)
     true = np.where(np.isfinite(y), np.maximum(y - g, 0.0), 0.0)
     m = (true > 0.05) | (pred > 0.05)
+    deep = true > 1.0
     return {"depth_rmse_m": math.sqrt(float(np.mean((pred[m] - true[m]) ** 2))) if m.any() else 0.0,
+            "deep_depth_rmse_m": math.sqrt(float(np.mean((pred[deep] - true[deep]) ** 2))) if deep.any() else 0.0,
             "depth_bias": float(pred.sum() / max(true.sum(), 1e-9) - 1.0), "n": int(m.sum()), "pred": pred, "true": true}
 
 
@@ -233,12 +239,15 @@ def calibrate(d: dict, alphas, rmaxs, r0: float = 3.5, progress=print, tie: floa
     z = d["z"].astype(float)
     g = np.maximum(z, GROUND_MIN)
     keys, zc, shore = site_covariates(d["lat"], d["lon"])  # exactly the features the engine computes
-    grid, xs = [], {}
+    grid, xs, free = [], {}, {}
     for alpha in alphas:
         for rmax in rmaxs:
             x = _lf_levels(d, alpha, rmax, r0)
+            if rmax not in free:
+                free[rmax] = _lf_levels(d, 0.0, rmax, r0)
             f = np.isfinite(x)
-            cv = cross_validate("hurdle", x[f], y[f], c[f], g[f], zc[f], shore[f], ev[f], keys[f])
+            dlt = np.where(f, free[rmax] - x, 0.0)
+            cv = cross_validate("hurdle", x[f], dlt[f], y[f], c[f], g[f], zc[f], shore[f], ev[f], keys[f])
             # misses: the full model floods but no low-fidelity cell reaches the node
             miss = ~f & np.isfinite(y) & (y - g > 0.05)
             dmiss = y[miss] - g[miss]
@@ -254,9 +263,10 @@ def calibrate(d: dict, alphas, rmaxs, r0: float = 3.5, progress=print, tie: floa
     alpha, rmax = pick["alpha"], pick["rmax"]
     x = xs[(alpha, rmax)]
     f = np.isfinite(x)
-    X, Y, Cc, G, ZC, SH, E, K, Zr = x[f], y[f], c[f], g[f], zc[f], shore[f], ev[f], keys[f], z[f]
-    m = fit_hurdle(X, Y, ZC, SH, E, K)
-    variants = {k: cross_validate(k, X, Y, Cc, G, ZC, SH, E, K) for k in ("hurdle", "tobit", "naive")}
+    dlt = np.where(f, free[rmax] - x, 0.0)
+    X, D, Y, Cc, G, ZC, SH, E, K, Zr = x[f], dlt[f], y[f], c[f], g[f], zc[f], shore[f], ev[f], keys[f], z[f]
+    m = fit_hurdle(X, D, Y, ZC, SH, E, K)
+    variants = {k: cross_validate(k, X, D, Y, Cc, G, ZC, SH, E, K) for k in ("hurdle", "tobit", "naive")}
     for name, cv_ in variants.items():
         progress(f"{name}: CV depth RMSE {cv_['depth_rmse_m']:.3f} m, bias {cv_['depth_bias']:+.3f}")
     sel = variants["hurdle"]
@@ -269,7 +279,8 @@ def calibrate(d: dict, alphas, rmaxs, r0: float = 3.5, progress=print, tie: floa
         "cv_depth_rmse_m": pick["cv_depth_rmse_m"], "cv_depth_bias": pick["cv_depth_bias"],  # held-out, misses included
         "cv_hit_rate": r((wet_t & wet_p).sum() / max(wet_t.sum(), 1)),
         "cv_false_alarm_ratio": r((wet_p & ~wet_t).sum() / max(wet_p.sum(), 1)),
-        "cv": {name: {"depth_rmse_m": r(cv_["depth_rmse_m"]), "depth_bias": r(cv_["depth_bias"]), "n": cv_["n"],
+        "cv": {name: {"depth_rmse_m": r(cv_["depth_rmse_m"]), "deep_depth_rmse_m": r(cv_["deep_depth_rmse_m"]),
+                      "depth_bias": r(cv_["depth_bias"]), "n": cv_["n"],
                       "by_level": conditional_table(X, cv_["pred"], cv_["true"]),
                       "by_ground_where_level_ge_2m": conditional_table(Zr, cv_["pred"], cv_["true"], Z_BINS, sel=X >= 2)}
                for name, cv_ in variants.items()},

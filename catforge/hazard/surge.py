@@ -15,7 +15,8 @@ their peak water-surface elevation η (m above MSL).
 **Full-model correction (``hazard/surge_calib``).** A two-part model calibrated against the 2′ model
 on a design set (``scripts/calibrate_surge.py``):
 
-- a logistic connectivity probability P(wet | x, z, shore);
+- a logistic connectivity probability P(wet | x, Δ, z, shore), where Δ is the friction loss the site
+  rule applied (x at α = 0 minus x);
 - a wet-level mixed model s(x) + γ·covariates + δ_node, whose event (σ_e) and site (σ_s) residual terms
   the loss kernel samples.
 
@@ -204,11 +205,13 @@ def catalog_surge(cat, events: np.ndarray | None = None, lf: dict = LF, threads:
     have: dict[int, tuple] = {}
     use_cache = use_cache and n_ev > 20  # single-event scenario catalogs are cheap; don't litter the cache
     if use_cache and path.exists():
-        d = np.load(path)
-        done = d["done"]
+        # materialise each array once: indexing a lazy NpzFile re-reads (and re-decompresses) the whole
+        # array on every access, and each slice would pin its own full copy
+        with np.load(path) as z:
+            done, cptr, clat, clon, ceta = (z[k] for k in ("done", "ptr", "lat", "lon", "eta"))
         for k, i in enumerate(done):
-            a, b = int(d["ptr"][k]), int(d["ptr"][k + 1])
-            have[int(i)] = (d["lat"][a:b], d["lon"][a:b], d["eta"][a:b])
+            a, b = int(cptr[k]), int(cptr[k + 1])
+            have[int(i)] = (clat[a:b], clon[a:b], ceta[a:b])
     missing = [int(i) for i in todo if int(i) not in have]
     if missing:
         threads = threads or max(1, min(os.cpu_count() or 1, 16))
@@ -319,26 +322,37 @@ def spline_basis(x, knots=KNOTS) -> np.ndarray:
     return np.stack([np.ones_like(x), x] + [np.maximum(x - k, 0.0) for k in knots], -1)
 
 
-def level_design(x, zc, shore, knots=KNOTS) -> np.ndarray:
-    """Wet-level design: spline(x) + [shore, z, x·shore, x·z]."""
+def level_design(x, dlt, zc, shore, knots=KNOTS) -> np.ndarray:
+    """Wet-level design: spline(x) + [shore, z, x·shore, x·z] + [Δ, Δ·shore, min(Δ, 3)·x].
+
+    Δ = x(α = 0) − x(α) is the friction loss the site rule applied. It is large when the site draws on
+    distant water; in a bay that water travels over water and amplifies rather than attenuates.
+    """
     x = np.asarray(x, float)
-    return np.concatenate([spline_basis(x, knots), np.stack([shore, zc, x * shore, x * zc], -1)], -1)
+    dlt = np.asarray(dlt, float)
+    return np.concatenate([spline_basis(x, knots), np.stack([shore, zc, x * shore, x * zc, dlt, dlt * shore,
+                                                             np.minimum(dlt, 3.0) * x], -1)], -1)
 
 
-def wet_features(x, zc, shore) -> np.ndarray:
-    """Connectivity design: [1, x, z, shore, x·z, x − z, (x − z)₊]."""
+def wet_features(x, dlt, zc, shore) -> np.ndarray:
+    """Connectivity design: [1, x, z, shore, x·z, x − z, (x − z)₊, Δ, Δ·shore]."""
     x = np.asarray(x, float)
-    return np.stack([np.ones_like(x), x, zc, shore, x * zc, x - zc, np.maximum(x - zc, 0.0)], -1)
+    dlt = np.asarray(dlt, float)
+    return np.stack([np.ones_like(x), x, zc, shore, x * zc, x - zc, np.maximum(x - zc, 0.0), dlt, dlt * shore], -1)
 
 
-def surge_levels(x, zc, shore, cal: dict) -> tuple[np.ndarray, np.ndarray]:
-    """Calibrated wet water level (without the site term) and P(wet), for low-fidelity levels x (NaN kept)."""
+def surge_levels(x, x_free, zc, shore, cal: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Calibrated wet water level (without the site term) and P(wet), NaN/0 where no low-fidelity water.
+
+    ``x`` is the site level at the calibrated α; ``x_free`` is the same extraction with α = 0.
+    """
     x = np.asarray(x, float)
     fin = np.isfinite(x)
     xf = np.where(fin, x, 0.0)
+    dlt = np.where(fin, np.asarray(x_free, float) - xf, 0.0)
     if cal.get("model") == "hurdle":
-        lvl = level_design(xf, zc, shore, tuple(cal["knots"])) @ np.asarray(cal["level_beta"])
-        eta = wet_features(xf, zc, shore) @ np.asarray(cal["wet_logit"])
+        lvl = level_design(xf, dlt, zc, shore, tuple(cal["knots"])) @ np.asarray(cal["level_beta"])
+        eta = wet_features(xf, dlt, zc, shore) @ np.asarray(cal["wet_logit"])
         pw = 1.0 / (1.0 + np.exp(-eta))
     else:  # uncalibrated: the low-fidelity level as is, always connected
         lvl, pw = xf, np.ones_like(xf)
