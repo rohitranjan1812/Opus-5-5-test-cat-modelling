@@ -404,7 +404,49 @@ The output is acceleration, velocity, Fourier spectrum and 5 %-damped PSA (frequ
 compared against the GMPE median ±1σ. The ratio to the GMPE median is 0.6–1.3 over M 6.5–7.5 and
 10–60 km.
 
-### 9.3 Rendering (why the picture is quantitatively right)
+### 9.3 Building-level reference
+
+**Footprint matching.** Exposed locations in view are matched to building footprints from OpenStreetMap
+vector tiles (OpenMapTiles schema via OpenFreeMap; `render_height` gives the building height):
+
+- A point inside a footprint (ray-casting test, candidates from a ~110 m grid index) matches that
+  footprint. Where footprints overlap, the smallest wins.
+- Otherwise the nearest footprint edge within 35 m is taken.
+- Anything else is flagged as unmatched.
+
+The in-view match rate, the share of locations inside a footprint, and the median snap distance are
+reported as a geocoding-quality signal.
+
+**Flood water at a building.** The plane is drawn at z<sub>ground</sub> + d(t), where d(t) is the same
+sub-grid inundation depth (§9.1) that drives the building's surge damage. Referencing the plane to the
+building's own ground makes it independent of the vertical datum: the photoreal mesh uses ellipsoidal
+heights, the DEM uses MSL, and the difference (the geoid undulation, about −25 to −35 m over the US)
+cancels.
+
+- **On Google Photorealistic 3D Tiles**, z<sub>ground</sub> is sampled from the mesh: 36 screen points
+  on a golden-angle spiral around the building are unprojected onto the mesh, and the 12th percentile
+  of their heights is used, so streets and yards win over roofs and facades. The sample is repeated
+  as finer tiles stream in.
+- **On the OSM rendering**, the terrain elevation is used.
+
+**Photorealistic tiles.** Google's tileset is loaded with deck.gl's `Tile3DLayer` using
+`operation: 'terrain+draw'`, so hazard fields and damage-tinted footprints can be draped onto it with
+the `TerrainExtension`. By default the tiles come through the server's `/v1/3dtiles/*` pass-through,
+so the key stays server-side:
+
+- the path is restricted to `root.json` and `datasets/…`;
+- a client-supplied `key` parameter is dropped;
+- responses are relayed without caching.
+
+A failed tileset (for example an invalid key) reports Google's error and falls back to the OSM view.
+
+**Synthetic exposure on land.** The demo portfolio generator redraws any location whose ETOPO1
+bilinear elevation is below −5 m, falling back to its hub if needed. This happens on a separate random
+stream, so every other location is unchanged. It removed 676 of 5,000 demo locations that had landed
+in open water. The 2′ DEM cannot resolve the coastal fringe, so the footprint match is the finer
+check.
+
+### 9.4 Rendering (why the picture is quantitatively right)
 
 - **Terrain** comes from the same ETOPO1 grid, served as Terrarium tiles by `/api/terrain/{z}/{x}/{y}.png`. It drives both MapLibre terrain and a hypsometric/bathymetric tint.
 - **Fields are draped as canvases whose pixel rows are uniform in Web-Mercator y.** MapLibre warps image sources linearly in Mercator space, so every pixel is evaluated at its true latitude; there is no drift across tall domains.

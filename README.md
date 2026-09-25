@@ -64,6 +64,39 @@ its response spectrum against the GMPE.
 ![Earthquake development: Northridge analog at t = 8 s — x-ray fault plane, P/S fronts, shaking, source time function](docs/img/develop-eq.png)
 ![Synthetic seismogram and response spectrum vs GMPE at a clicked site](docs/img/develop-seismogram.png)
 
+**Mapped building reference: your exposure on real 3-D buildings.** Every exposed location is snapped
+to its mapped building footprint (OpenStreetMap, via keyless OpenFreeMap vector tiles). A location
+inside a footprint matches it; otherwise the nearest footprint edge within 35 m is taken. The matched
+building is tinted by its live damage ratio. Pick any building in the **Exposed buildings** table
+(ranked by loss) to fly to street level, where you see:
+
+- the building's live gust or PGA and its damage;
+- the geocode-to-footprint offset (a leader line);
+- for hurricanes, the flood-water plane at the building's ground plus the modelled inundation depth
+  — the same depth that drives its surge damage — rising against the facades as the surge arrives.
+
+The match rate and snap distances also serve as a geocoding-quality check on the portfolio.
+
+With a Google Maps Platform key, the same view renders on **Google Photorealistic 3D Tiles**. The
+damage tints and hazard fields are draped onto the photoreal mesh (deck.gl `TerrainExtension`), and
+the building's ground height is sampled from the mesh itself.
+
+![Street-level view: exposed building matched to its footprint, flood plane 3.9 m above ground at T+1 h](docs/img/develop-street.png)
+![Exposed buildings ranked by loss, with footprint matches and the building card](docs/img/develop-exposed.png)
+
+Enabling Google 3D (the Map Tiles API must be enabled on the key):
+
+```bash
+# recommended: the server relays /v1/3dtiles/* and the key never reaches the browser
+export GOOGLE_MAPS_API_KEY=...        # API-restricted to the Map Tiles API (server key: no referrer restriction)
+catforge serve
+curl localhost:8000/api/integrations  # {"google_3d_tiles": {"available": true, "mode": "server-proxy", ...}}
+```
+
+Alternatively, paste a browser key in the **Building view** panel; it is stored only in that browser.
+Google's attribution line is shown whenever photoreal tiles are on, and responses are relayed without
+caching.
+
 ```python
 from catforge.client import CatForgeClient
 cf = CatForgeClient("http://localhost:8000")
@@ -165,6 +198,8 @@ Validation maps aliases, coerces types, applies defaults and reports problems as
 | `POST /api/develop` (`?wait=true`) | Time-resolved development of one event realization (surge, rain, rupture, per-building damage) |
 | `POST /api/develop/seismogram` | EXSIM-style synthetic seismogram and PSA at any site |
 | `GET /api/terrain/{z}/{x}/{y}.png` | ETOPO1 terrain/bathymetry as Terrarium tiles |
+| `GET /api/integrations` | Which map integrations are available (Google 3D Tiles proxy, OSM vector tiles); never returns secrets |
+| `GET /v1/3dtiles/…` | Pass-through for Google Photorealistic 3D Tiles (server key; only the 3D Tiles tree is reachable) |
 | `GET /api/jobs/{id}` | Job progress and results |
 
 ## Validation & performance
@@ -174,9 +209,9 @@ These numbers come from the 5,000-location demo book ($16.25bn TIV), with 20,000
 
 **Convergence checks**
 
-- **AAL:** the three independent estimators agree. YLT gives $23.0m, the ELT gives $23.0m, and the
-  analytic FFT gives $23.0m.
-- **AEP curve:** simulated and analytic (FFT) agree within about 1% from the 1-in-50 to the 1-in-1000.
+- **AAL:** the three independent estimators agree. YLT gives $23.0m, the ELT gives $23.2m, and the
+  analytic FFT gives $23.2m.
+- **AEP curve:** simulated and analytic (FFT) agree within about 2% from the 1-in-50 to the 1-in-1000.
 - **Euler allocation:** co-TVaR contributions sum exactly to TVaR.
 - **Tail re-simulation:** re-running the tail years is bit-identical to the original run.
 
@@ -198,8 +233,8 @@ These numbers come from the 5,000-location demo book ($16.25bn TIV), with 20,000
 - **Random fields:** the Vecchia field with m = 30 reproduces Matérn correlations to within 0.013–0.026.
 - **Wind:** the browser and server wind fields agree to about 0.002 m/s.
 
-**Tests:** `pytest` runs 51 tests covering the hazard physics, random fields, the surge solver
-(the analytic set-up and mass conservation), rupture kinematics, the maths identities, the financial
+**Tests:** `pytest` runs 59 tests covering the hazard physics, random fields, the surge solver
+(the analytic set-up and mass conservation), rupture kinematics, the Google 3D Tiles proxy, the maths identities, the financial
 terms, reinsurance path logic, the API and the SDK.
 
 ## Project layout
@@ -213,10 +248,12 @@ catforge/
   engine/         kernel.py (numba loss kernel) · ylt.py · model.py (orchestration)
   analytics/      ep.py · analytic.py (FFT) · allocation.py · sensitivity.py · insights.py
   api/            app.py · schemas.py · store.py (jobs, persistence)
+  api/tiles3d.py  Google Photorealistic 3D Tiles pass-through + /api/integrations
   physics/        grf.py (Matérn, Vecchia, circulant) · surge2d.py · tc_dynamics.py · eq_dynamics.py
                   dem.py (ETOPO1, terrain tiles) · develop.py (4-D event payloads)
   scenario.py · client.py · cli.py · rng.py · geo.py · data/ (incl. etopo1_2min.npz)
-frontend/         React + TypeScript + ECharts + Leaflet; src/dev/ = MapLibre + deck.gl 3-D scenes
+frontend/         React + TypeScript + ECharts + Leaflet; src/dev/ = MapLibre + deck.gl 3-D scenes,
+                  footprint matching (footprints.ts), building layers (buildings.ts), Google 3D Tiles (google3d.ts)
 docs/             methodology.md
 tests/
 ```

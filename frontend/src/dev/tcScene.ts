@@ -8,6 +8,7 @@ import type { GridSpec, Storm } from './physics'
 import { decode, destination, invMercY, mercY, pressureDeficit, sample, sampleNan, trackState, windUV } from './physics'
 import type { Canvas2D, Stencil } from './raster'
 import { at, declutter, hexRgba, lut, makeCanvas, stencil } from './raster'
+import type { SiteAccess } from './sites'
 import type { TcDev } from './types'
 
 export interface TcFlags { wind: boolean; footprint: boolean; particles: boolean; surge: boolean; rain: boolean; buildings: boolean; radii: boolean; labels: boolean }
@@ -349,8 +350,23 @@ export class TcScene {
 
   siteAt(i: number, t: number): { gust: number; damage: number; depth: number } {
     const S = this.sites!
-    const k = Math.round(Math.min(Math.max((t - this.p.t0) / this.p.frame_h, 0), S.nf - 1))
-    return { gust: S.gust[i * S.nf + k], damage: this.siteDamage(i, t), depth: S.depth[i * S.nf + k] }
+    const x = Math.min(Math.max((t - this.p.t0) / this.p.frame_h, 0), S.nf - 1)
+    const k = Math.min(Math.floor(x), S.nf - 2)
+    const w = x - k
+    const lerp = (a: Float32Array) => a[i * S.nf + k] * (1 - w) + a[i * S.nf + k + 1] * w
+    return { gust: lerp(S.gust), damage: this.siteDamage(i, t), depth: lerp(S.depth) }
+  }
+
+  siteAccess(): SiteAccess | null {
+    const S = this.p.sites
+    if (!S || !this.sites) return null
+    return {
+      n: S.n, lat: S.lat, lon: S.lon, elev: S.elev, id: S.loc_id, cls: S.construction, tiv: S.tiv,
+      finalLoss: S.gu ?? S.tiv.map(() => 0), finalDamage: S.damage_final ?? S.tiv.map(() => 0),
+      damage: (i, t) => this.siteDamage(i, t),
+      depth: (i, t) => this.siteAt(i, t).depth,
+      intensity: (i, t) => { const g = this.siteAt(i, t).gust; return { text: `3-s gust ${g.toFixed(0)} m/s`, x: Math.max(0, (g - 15) / 55) } },
+    }
   }
 
   // --------------------------------------------------------------------------- probe meteogram

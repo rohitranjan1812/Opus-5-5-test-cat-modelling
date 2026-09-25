@@ -7,6 +7,7 @@ import { DAMAGE, HEAT, SLIP, TOKENS } from '../theme'
 import { decode, shakingEnvelope } from './physics'
 import type { Canvas2D } from './raster'
 import { at, declutter, hexRgba, lut, makeCanvas, stencil } from './raster'
+import type { SiteAccess } from './sites'
 import type { EqDev } from './types'
 
 export interface EqFlags { shaking: boolean; fronts: boolean; footprint: boolean; mesh: boolean; fault: boolean; buildings: boolean; labels: boolean }
@@ -192,6 +193,22 @@ export class EqScene {
       id: 'wave-mesh', widthUnits: 'pixels', getWidth: 1.2,
       data: { length: nseg, attributes: { getSourcePosition: { value: src, size: 3 }, getTargetPosition: { value: dst, size: 3 }, getColor: { value: col, size: 4, normalized: true } } },
     } as never)
+  }
+
+  siteAccess(): SiteAccess | null {
+    const S = this.p.sites
+    if (!S) return null
+    return {
+      n: S.n, lat: S.lat, lon: S.lon, elev: S.elev, id: S.loc_id, cls: S.construction, tiv: S.tiv,
+      finalLoss: S.gu, finalDamage: S.damage,
+      damage: (i, t) => this.siteDamage(i, t),
+      depth: () => 0,
+      intensity: (i, t) => {
+        const tE = S.t_peak[i] + 2.5 * Math.max(S.t_peak[i] - S.t_s[i], 2) + 5
+        const a = S.pga[i] * shakingEnvelope(t, S.t_p[i], S.t_s[i], S.t_peak[i], tE)
+        return { text: `PGA now ${a.toFixed(2)} g (peak ${S.pga[i].toFixed(2)} g)`, x: Math.min(1, a / 0.6) }
+      },
+    }
   }
 
   siteDamage(i: number, t: number): number {

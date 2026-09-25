@@ -47,6 +47,30 @@ def _dist_to_coast_km(lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
     return out
 
 
+def _keep_on_land(lat, lon, r, clat, clon, spread, rng, max_depth_m: float = 5.0, tries: int = 40):
+    """Redraw scatter that lands in open water (ETOPO1 bilinear elevation below −max_depth_m).
+
+    Uses its own random stream so every other location keeps its draw; the scatter radius shrinks on
+    each retry, and anything still offshore falls back to its hub (hubs are on land).
+    """
+    from ..physics.dem import elevation
+
+    lat, lon, r = lat.copy(), lon.copy(), r.copy()
+    bad = elevation(lat, lon, fill=0.0) < -max_depth_m
+    for k in range(tries):
+        if not bad.any():
+            break
+        idx = np.nonzero(bad)[0]
+        rr = spread[idx] * (0.97 ** k) * np.sqrt(rng.chisquare(2, idx.size) / 2)
+        th = rng.uniform(0, 2 * np.pi, idx.size)
+        lat[idx] = clat[idx] + rr * np.cos(th) / KM_PER_DEG_LAT
+        lon[idx] = clon[idx] + rr * np.sin(th) / (KM_PER_DEG_LON_EQ * np.cos(np.radians(clat[idx])))
+        r[idx] = rr
+        bad[idx] = elevation(lat[idx], lon[idx], fill=0.0) < -max_depth_m
+    lat[bad], lon[bad], r[bad] = clat[bad], clon[bad], 0.0
+    return lat, lon, r
+
+
 def generate_portfolio(n_locations: int = 5000, seed: int = 11, states: list[str] | None = None,
                        commercial_share: float = 0.18, name: str | None = None) -> Portfolio:
     """Generate a realistic synthetic portfolio.
@@ -69,6 +93,7 @@ def generate_portfolio(n_locations: int = 5000, seed: int = 11, states: list[str
     th = rng.uniform(0, 2 * np.pi, n_locations)
     lat = clat + r * np.cos(th) / KM_PER_DEG_LAT
     lon = clon + r * np.sin(th) / (KM_PER_DEG_LON_EQ * np.cos(np.radians(clat)))
+    lat, lon, r = _keep_on_land(lat, lon, r, clat, clon, spread, np.random.default_rng([seed, 1]))
     state = np.array([cities[i][1] for i in ci])
     dcoast = _dist_to_coast_km(lat, lon)
     rel_r = r / np.maximum(spread, 1e-6)

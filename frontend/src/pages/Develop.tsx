@@ -3,7 +3,12 @@ import type { EChartsOption } from 'echarts'
 import { api } from '../api'
 import type { Job } from '../api'
 import Chart from '../components/Chart'
-import { Card, Empty, JobStatus, Seg, Tile } from '../components/ui'
+import { Card, DataTable, Empty, JobStatus, Seg, Tile } from '../components/ui'
+import { buildingLayers } from '../dev/buildings'
+import { EMPTY_MATCH, MIN_MATCH_ZOOM, matchFootprints } from '../dev/footprints'
+import type { MatchResult } from '../dev/footprints'
+import { storeKey, storedKey } from '../dev/googleKey'
+import type { GoogleMode } from '../dev/googleKey'
 import Map3D, { refreshDrapes } from '../dev/Map3D'
 import type { Drape, MapHandle } from '../dev/Map3D'
 import { EQ_FLAGS, EqScene } from '../dev/eqScene'
@@ -13,10 +18,12 @@ import { TC_FLAGS, TcScene } from '../dev/tcScene'
 import type { TcFlags } from '../dev/tcScene'
 import type { DevPayload, EqDev, Seismogram, TcDev } from '../dev/types'
 import { money, moneyAxis, num } from '../format'
-import { useApp } from '../state'
+import { useApp, useFetch } from '../state'
 import { DAMAGE, HEAT, RAIN, SLIP, TOKENS, WATER, lineSeries, logAxis, rampCss, valueAxis } from '../theme'
 
 type Scene = TcScene | EqScene
+interface Integrations { google_3d_tiles: { available: boolean; mode: string; setup: string | null } }
+const DETAIL_ZOOM = 12.5 // above this, buildings are drawn as their footprints / markers instead of km-scale columns
 // last development survives page switches (the payload is large and deterministic per request)
 let LAST: { key: string; data: DevPayload } | null = null
 
@@ -71,8 +78,28 @@ export default function Develop() {
   const [seis, setSeis] = useState<Seismogram | null>(null)
   const [seisErr, setSeisErr] = useState<string | null>(null)
   const [ready, setReady] = useState<MapHandle | null>(null)
+  // building-level reference: OSM footprints + Google Photorealistic 3D Tiles
+  const integ = useFetch(() => api.get<Integrations>('/integrations'), [])
+  const [userKey, setUserKey] = useState<string | null>(() => storedKey())
+  const [keyDraft, setKeyDraft] = useState('')
+  const [googleOn, setGoogleOn] = useState(false)
+  const [googleErr, setGoogleErr] = useState<string | null>(null)
+  const [credits, setCredits] = useState('')
+  const [streetMap, setStreetMap] = useState(true)
+  const [zoom, setZoom] = useState(4)
+  const [match, setMatch] = useState<MatchResult>(EMPTY_MATCH)
+  const [sel, setSel] = useState<number | null>(null)
+  const [groundZ, setGroundZ] = useState<number | null>(null)
+  const googleMode = useMemo<GoogleMode | null>(() => (integ.data?.google_3d_tiles.available ? { kind: 'proxy' } : userKey ? { kind: 'key', key: userKey } : null), [integ.data, userKey])
+  // the Google 3D Tiles stack (loaders.gl, geo-layers) is fetched only when photoreal mode is first switched on
+  const [g3d, setG3d] = useState<typeof import('../dev/google3d') | null>(null)
+  useEffect(() => { if (googleOn && !g3d) import('../dev/google3d').then(setG3d).catch((e) => setGoogleErr(String(e))) }, [googleOn, g3d])
+  // a failed Google load falls back to the OSM rendering (the error stays on screen until toggled)
+  const google = googleOn && googleMode != null && g3d != null && !googleErr
+  const detail = google || zoom >= DETAIL_ZOOM
 
   const scene = useMemo<Scene | null>(() => (data ? (data.peril === 'TC' ? new TcScene(data, mode) : new EqScene(data, mode)) : null), [data, mode])
+  const sites = useMemo(() => scene?.siteAccess() ?? null, [scene])
   const tRange = useMemo<[number, number]>(() => (data ? (data.peril === 'TC' ? [data.t0, data.t1] : [0, data.t_max]) : [0, 1]), [data])
   const tRef = useRef(0)
   const playRef = useRef(false)
@@ -91,6 +118,8 @@ export default function Develop() {
     setSpeed(data.peril === 'TC' ? '3' : '1')
     setProbe(null)
     setSeis(null)
+    setSel(null)
+    setMatch(EMPTY_MATCH)
     dirty.current = true
   }, [data])
 
@@ -125,14 +154,15 @@ export default function Develop() {
     if (scene instanceof TcScene) {
       const f = tcFlags
       const out: Drape[] = []
-      if (scene.rainC) out.push({ id: 'drape-rain', canvas: scene.rainC.canvas, bbox: scene.rainC.bbox, opacity: 0.9, visible: f.rain })
-      out.push({ id: 'drape-wind', canvas: scene.wind.canvas, bbox: scene.wind.bbox, opacity: 0.88, visible: f.wind })
-      if (scene.surgeC) out.push({ id: 'drape-surge', canvas: scene.surgeC.canvas, bbox: scene.surgeC.bbox, opacity: 1, visible: f.surge })
-      out.push({ id: 'drape-particles', canvas: scene.parts.canvas, bbox: scene.parts.bbox, opacity: 0.9, visible: f.particles })
+      const on = !google && zoom < 14 // km-scale fields say nothing at street scale; the flood plane does
+      if (scene.rainC) out.push({ id: 'drape-rain', canvas: scene.rainC.canvas, bbox: scene.rainC.bbox, opacity: 0.9, visible: on && f.rain })
+      out.push({ id: 'drape-wind', canvas: scene.wind.canvas, bbox: scene.wind.bbox, opacity: 0.88, visible: on && f.wind })
+      if (scene.surgeC) out.push({ id: 'drape-surge', canvas: scene.surgeC.canvas, bbox: scene.surgeC.bbox, opacity: 1, visible: on && f.surge })
+      out.push({ id: 'drape-particles', canvas: scene.parts.canvas, bbox: scene.parts.bbox, opacity: 0.9, visible: on && f.particles })
       return out
     }
-    return [{ id: 'drape-shake', canvas: scene.c.canvas, bbox: scene.c.bbox, opacity: 1, visible: true }]
-  }, [scene, tcFlags])
+    return [{ id: 'drape-shake', canvas: scene.c.canvas, bbox: scene.c.bbox, opacity: zoom < 14 ? 1 : 0.35, visible: !google }]
+  }, [scene, tcFlags, google, zoom])
 
   // camera focus: the landfall window of the track, or the rupture plus the strong-shaking reach
   const focus = useMemo<[number, number, number, number] | null>(() => {
@@ -153,7 +183,8 @@ export default function Develop() {
   const onHover = useCallback((i: number) => { hoverRef.current = i >= 0 ? i : null }, [])
 
   // ------------------------------------------------------------------ render loop
-  useEffect(() => { dirty.current = true }, [tcFlags, eqFlags, exag, probe, depthScale, ready])
+  useEffect(() => { dirty.current = true }, [tcFlags, eqFlags, exag, probe, depthScale, ready, google, detail, match, sel, groundZ])
+  const selectSite = useCallback((i: number) => { setSel(i); setGroundZ(null) }, [])
   useEffect(() => {
     if (!scene || !ready) return
     let raf = 0
@@ -184,9 +215,22 @@ export default function Develop() {
       } else if (changed) { time('ground', () => scene.render(t, eqFlags)); touched.push('drape-shake') }
       if (touched.length) refreshDrapes(ready, touched)
       if (changed) {
+        const ex = google ? 1 : exag
+        const regional = scene instanceof TcScene
+          ? scene.layers(t, { ...tcFlags, buildings: tcFlags.buildings && !detail }, ex, probe, onHover)
+          : scene.layers(t, { ...eqFlags, buildings: eqFlags.buildings && !detail }, ex, probe, onHover, depthScale)
+        const meshDrapes = !google || !g3d ? [] : scene instanceof TcScene
+          ? [...(tcFlags.rain && scene.rainC ? [g3d.drapeOnMesh('mesh-rain', scene.rainC, 0.75)] : []),
+            ...(tcFlags.wind ? [g3d.drapeOnMesh('mesh-wind', scene.wind, 0.55)] : []),
+            ...(tcFlags.surge && scene.surgeC ? [g3d.drapeOnMesh('mesh-surge', scene.surgeC, 0.8)] : [])]
+          : [g3d.drapeOnMesh('mesh-shake', scene.c, 0.6)]
+        const bldg = detail && sites && ((scene instanceof TcScene && tcFlags.buildings) || (scene instanceof EqScene && eqFlags.buildings))
+          ? buildingLayers({ sites, t, mode, google, match, selected: sel, groundZ, exag: ex, onSelect: selectSite }) : []
         ready.overlay.setProps({
-          layers: scene instanceof TcScene ? scene.layers(t, tcFlags, exag, probe, onHover) : scene.layers(t, eqFlags, exag, probe, onHover, depthScale),
-          getTooltip: ({ layer, index }: { layer?: { id: string } | null; index: number }) => {
+          layers: [...(google && googleMode && g3d ? [g3d.googleTilesLayer(googleMode, setCredits, setGoogleErr)] : []), ...meshDrapes, ...regional, ...bldg],
+          onError: (e: Error, layer?: { id: string } | null) => { if (layer?.id === 'google-3d') setGoogleErr(String(e?.message ?? e)) },
+          onClick: (info: { layer?: { id: string } | null; index: number }) => { if (info.layer?.id === 'sites' && info.index >= 0) selectSite(info.index) },
+          getTooltip: ({ layer, index, object }: { layer?: { id: string } | null; index: number; object?: unknown }) => {
             if (!layer || index < 0) return null
             const tt = tRef.current
             if (layer.id === 'sites' && scene instanceof TcScene && scene.p.sites) {
@@ -199,6 +243,13 @@ export default function Develop() {
               const S = scene.p.sites
               return { html: `<b>${S.loc_id[index]}</b> · ${S.construction[index]} · Vs30 ${S.vs30[index]}<br/>PGA ${S.pga[index].toFixed(3)} g (median ${S.pga_median[index].toFixed(3)})` +
                 `<br/>S arrival ${S.t_s[index].toFixed(1)} s<br/>Damage ${(100 * scene.siteDamage(index, tt)).toFixed(1)}% → ${(100 * S.damage[index]).toFixed(1)}%<br/>GU loss ${money(S.gu[index])}`, className: 'deck-tip' }
+            }
+            if ((layer.id === 'exposed-footprints' || layer.id === 'exposed-points') && sites) {
+              const i = layer.id === 'exposed-points' ? (object as number) : (object as { i: number }).i
+              const f = match.byIndex.get(i)
+              return { html: `<b>${sites.id[i]}</b> · ${sites.cls[i]}<br/>TIV ${money(sites.tiv[i])}<br/>${sites.intensity(i, tt).text}` +
+                `<br/>Damage now ${(100 * sites.damage(i, tt)).toFixed(1)}% · final loss ${money(sites.finalLoss[i])}` +
+                (f ? `<br/>Mapped footprint: ${f.inside ? 'inside' : `${f.snapM.toFixed(0)} m away`} · ${f.height.toFixed(0)} m tall` : '<br/>No mapped footprint within 35 m'), className: 'deck-tip' }
             }
             if (layer.id === 'fault' && scene instanceof EqScene) {
               const s = scene.subs[index]
@@ -215,7 +266,49 @@ export default function Develop() {
     }
     raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
-  }, [scene, ready, tcFlags, eqFlags, exag, probe, depthScale, tRange, onHover])
+  }, [scene, ready, tcFlags, eqFlags, exag, probe, depthScale, tRange, onHover, google, googleMode, g3d, detail, sites, match, sel, groundZ, mode, selectSite])
+
+  // ------------------------------------------------------------------ buildings: footprint matching, street view
+  const matchSig = useRef('')
+  const onSettled = useCallback(() => {
+    const m = ready?.map
+    if (!m || !sites) return
+    const b = m.getBounds()
+    const sig = [m.getZoom().toFixed(2), b.getWest().toFixed(4), b.getSouth().toFixed(4), b.getEast().toFixed(4), b.getNorth().toFixed(4), streetMap].join()
+    if (sig === matchSig.current) return
+    matchSig.current = sig
+    setMatch(streetMap ? matchFootprints(m, sites) : EMPTY_MATCH)
+  }, [ready, sites, streetMap])
+  useEffect(() => { matchSig.current = '' }, [sites, streetMap])
+  const onView = useCallback((z: number) => setZoom(Math.round(z * 4) / 4), [])
+
+  const flyToSite = useCallback((i: number) => {
+    if (!ready || !sites) return
+    selectSite(i)
+    if (!google) setExag(1)
+    ready.map.flyTo({ center: [sites.lon[i], sites.lat[i]], zoom: google ? 17.6 : 16.4, pitch: 62, bearing: ready.map.getBearing(), duration: 2800, essential: true })
+  }, [ready, sites, google, selectSite])
+  const backToEvent = useCallback(() => {
+    if (!ready || !focus) return
+    ready.map.fitBounds([[focus[0], focus[1]], [focus[2], focus[3]]], { padding: 40, pitch: 52, bearing: -10, duration: 2200 })
+  }, [ready, focus])
+
+  // ground under the selected building on the photoreal mesh: re-sampled as finer tiles stream in
+  useEffect(() => {
+    if (!google || !g3d || sel == null || !ready || !sites || zoom < 15) return
+    const timers = [900, 2500, 5000, 9000].map((ms) => window.setTimeout(() => {
+      const z = g3d.sampleGround(ready.overlay, ready.map, sites.lon[sel], sites.lat[sel])
+      if (z != null) setGroundZ(z)
+    }, ms))
+    return () => timers.forEach((x) => window.clearTimeout(x))
+  }, [google, g3d, sel, ready, sites, zoom])
+  useEffect(() => { setGoogleErr(null); setCredits('') }, [googleMode, googleOn])
+
+  const exposed = useMemo(() => {
+    if (!sites) return []
+    return Array.from({ length: sites.n }, (_, i) => i).sort((a, b) => sites.finalLoss[b] - sites.finalLoss[a]).slice(0, 40)
+      .map((i) => ({ i, id: sites.id[i], cls: sites.cls[i], tiv: sites.tiv[i], dmg: sites.finalDamage[i], loss: sites.finalLoss[i] }))
+  }, [sites])
 
   const seek = (t: number) => { tRef.current = t; setTUi(t) }
   const togglePlay = () => {
@@ -430,9 +523,14 @@ export default function Develop() {
           ? 'Drag to pan · right-drag / ctrl-drag to tilt and rotate · click the map for a site meteogram'
           : 'Fault plane shown below ground (x-ray) · click the map for a synthetic seismogram at that site') : undefined}
           tools={
-            <div className="row small" style={{ gap: 14 }}>
-              <label className="row" style={{ gap: 6 }}>Terrain ×{exag.toFixed(1)}
-                <input type="range" min={1} max={6} step={0.5} value={exag} onChange={(e) => setExag(Number(e.target.value))} aria-label="Terrain exaggeration" /></label>
+            <div className="row small wrap" style={{ gap: 14 }}>
+              <label className={`chip ${streetMap ? 'on' : ''}`} title="OpenStreetMap roads, water and building footprints (OpenFreeMap)">
+                <input type="checkbox" checked={streetMap} onChange={(e) => setStreetMap(e.target.checked)} />Street map</label>
+              <label className={`chip ${google ? 'on' : ''}`} title={googleMode ? 'Google Photorealistic 3D Tiles' : 'Configure a Google Maps key in the Building view panel'}
+                style={{ opacity: googleMode ? 1 : 0.55 }}>
+                <input type="checkbox" checked={googleOn && googleMode != null} disabled={!googleMode} onChange={(e) => setGoogleOn(e.target.checked)} />Google 3D</label>
+              <label className="row" style={{ gap: 6, opacity: google ? 0.45 : 1 }}>Terrain ×{exag.toFixed(1)}
+                <input type="range" min={1} max={6} step={0.5} value={exag} disabled={google} onChange={(e) => setExag(Number(e.target.value))} aria-label="Terrain exaggeration" /></label>
               {eq && <label className="row" style={{ gap: 6 }}>Depth ×{depthScale.toFixed(1)}
                 <input type="range" min={1} max={4} step={0.5} value={depthScale} onChange={(e) => setDepthScale(Number(e.target.value))} aria-label="Fault depth scale" /></label>}
             </div>
@@ -445,8 +543,10 @@ export default function Develop() {
               </label>
             ))}
           </div>
-          <Map3D mode={mode} bbox={focus} fitKey={data ? `${data.name}-${data.seed}` : ''} exaggeration={exag}
-            drapes={drapes} onReady={setReady} onClick={onMapClick} height={620}>
+          <Map3D mode={mode} bbox={focus} fitKey={data ? `${data.name}-${data.seed}` : ''} exaggeration={exag} terrain={!google}
+            streetMap={streetMap} drapes={drapes} onReady={setReady} onClick={onMapClick} onView={onView} onSettled={onSettled} height={620}>
+            {google && <div className="g3d-attrib"><b>Google</b>{credits ? ` · ${credits}` : ''}</div>}
+            {googleOn && googleErr && <div className="g3d-error">Google 3D Tiles failed: {googleErr} — showing OpenStreetMap buildings instead.</div>}
             {scene && <div className="hud">{hud}</div>}
             {data && (
               <div className="legends">
@@ -518,6 +618,69 @@ export default function Develop() {
         </div>
       </div>
 
+      {data && sites && (
+        <div className="grid g3">
+          <Card className="span2" title="Exposed buildings — mapped reference"
+            desc="Portfolio buildings in this event's footprint, ranked by final ground-up loss. Pick one to fly to street level: it is matched to its mapped building footprint, tinted by live damage and, with Google 3D, draped onto the photorealistic city mesh."
+            tools={<span className="small muted num">{match.zoomOk
+              ? `In view: ${match.matched}/${match.inView} matched to mapped footprints (${match.inView ? Math.round((100 * match.matched) / match.inView) : 0}%) · ${match.inside} inside a footprint${match.medianSnap != null ? ` · median snap ${match.medianSnap.toFixed(0)} m` : ''}`
+              : `Zoom in past ${MIN_MATCH_ZOOM} (now ${zoom.toFixed(1)}) to match footprints`}</span>}>
+            <DataTable rows={exposed} maxHeight={300} onRowClick={(r) => flyToSite(r.i)} selected={(r) => r.i === sel}
+              columns={[
+                { key: 'id', label: 'Location' }, { key: 'cls', label: 'Construction' },
+                { key: 'tiv', label: 'TIV', align: 'r', render: (r) => money(r.tiv) },
+                { key: 'now', label: 'Damage now', align: 'r', value: (r) => sites.damage(r.i, tUi), render: (r) => `${(100 * sites.damage(r.i, tUi)).toFixed(1)}%` },
+                { key: 'dmg', label: 'Final damage', align: 'r', render: (r) => `${(100 * r.dmg).toFixed(1)}%` },
+                { key: 'loss', label: 'Final GU loss', align: 'r', render: (r) => money(r.loss) },
+                { key: 'fp', label: 'Footprint', value: (r) => (match.byIndex.get(r.i)?.snapM ?? 999), render: (r) => {
+                  const f = match.byIndex.get(r.i)
+                  return f ? (f.inside ? 'inside' : `${f.snapM.toFixed(0)} m`) : (match.zoomOk && ready?.map.getBounds().contains([sites.lon[r.i], sites.lat[r.i]]) ? 'none ≤ 35 m' : '—')
+                } },
+              ]} />
+          </Card>
+          <Card title="Building view" desc={googleMode?.kind === 'proxy' ? 'Google Photorealistic 3D Tiles via this server (the key never reaches the browser)'
+            : googleMode ? 'Google Photorealistic 3D Tiles with your browser key' : 'OpenStreetMap footprints; add a Google Maps key for photorealistic 3D'}>
+            {sel != null && sel < sites.n ? (
+              <div className="col" style={{ gap: 10 }}>
+                <div className="row wrap" style={{ gap: 8 }}>
+                  <b>{sites.id[sel]}</b><span className="pill">{sites.cls[sel]}</span><span className="small muted num">{sites.lat[sel].toFixed(5)}°, {sites.lon[sel].toFixed(5)}°</span>
+                </div>
+                <div className="grid g2">
+                  <Tile label="Damage now" value={`${(100 * sites.damage(sel, tUi)).toFixed(1)}%`} foot={sites.intensity(sel, tUi).text} />
+                  <Tile label="Final GU loss" value={money(sites.finalLoss[sel])} foot={`TIV ${money(sites.tiv[sel])} · final damage ${(100 * sites.finalDamage[sel]).toFixed(1)}%`} />
+                </div>
+                {tc && <div className="small num">Water at the building now: <b>{sites.depth(sel, tUi).toFixed(2)} m</b> above ground (sub-grid surge depth that drives the surge damage).</div>}
+                <div className="small muted">{(() => {
+                  const f = match.byIndex.get(sel)
+                  if (f) return `Mapped footprint (OSM): ${f.inside ? 'location inside the footprint' : `nearest footprint ${f.snapM.toFixed(0)} m away`} · height ${f.height.toFixed(0)} m.`
+                  return match.zoomOk ? 'No mapped footprint within 35 m of this location — check its geocode.' : 'Fly to street level to match the mapped footprint.'
+                })()}{google ? ` Ground on the photoreal mesh: ${groundZ != null ? `${groundZ.toFixed(1)} m (ellipsoidal)` : 'sampling…'}.` : ''}</div>
+                <div className="row" style={{ gap: 8 }}>
+                  <button className="btn primary sm" onClick={() => flyToSite(sel)}>Street view</button>
+                  <button className="btn sm" onClick={backToEvent}>Back to event</button>
+                  <button className="btn sm ghost" onClick={() => setSel(null)}>Clear</button>
+                </div>
+              </div>
+            ) : <Empty>Select a building in the table or click one on the map.</Empty>}
+            <div className="mt small col" style={{ gap: 8, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+              {googleMode?.kind === 'proxy' && <div className="muted">Server proxy active (<code>GOOGLE_MAPS_API_KEY</code>). Toggle <b>Google 3D</b> above the map.</div>}
+              {googleMode?.kind === 'key' && (
+                <div className="row wrap" style={{ gap: 8 }}><span className="muted">Using a key stored in this browser only.</span>
+                  <button className="btn sm ghost" onClick={() => { storeKey(null); setUserKey(null); setGoogleOn(false) }}>Forget key</button></div>
+              )}
+              {!googleMode && (
+                <>
+                  <div className="muted">{integ.data?.google_3d_tiles.setup ?? 'Google 3D Tiles need a Google Maps Platform key with the Map Tiles API enabled.'}</div>
+                  <form className="row" style={{ gap: 8 }} onSubmit={(e) => { e.preventDefault(); if (keyDraft.trim()) { storeKey(keyDraft.trim()); setUserKey(keyDraft.trim()); setKeyDraft(''); setGoogleOn(true) } }}>
+                    <input type="password" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} placeholder="Google Maps API key (browser)" aria-label="Google Maps API key" style={{ flex: 1 }} autoComplete="off" />
+                    <button className="btn sm" type="submit" disabled={!keyDraft.trim()}>Use key</button>
+                  </form>
+                </>
+              )}
+            </div>
+          </Card>
+        </div>
+      )}
       {eq && (
         <div className="grid g2">
           <Card title="Synthetic seismogram" desc={seis ? `${seis.lat.toFixed(3)}°, ${seis.lon.toFixed(3)}° · ${seis.epicentral_km.toFixed(0)} km from epicentre · ${seis.n_subfaults} sub-faults · ${seis.method} · horizontal S-wave synthesis (no P energy by construction)` : 'Click the map to simulate ground motion at a site'}>

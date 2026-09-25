@@ -86,7 +86,8 @@ def J(o, status: int = 200) -> JSONResponse:
 
 
 def create_app(model: CatModel | None = None, data_dir: str | None = None, demo: bool | None = None,
-               demo_locations: int | None = None, demo_years: int | None = None) -> FastAPI:
+               demo_locations: int | None = None, demo_years: int | None = None,
+               google_maps_key: str | None = None, google_transport=None) -> FastAPI:
     data_dir = data_dir if data_dir is not None else os.environ.get("CATFORGE_DATA_DIR")
     demo = demo if demo is not None else os.environ.get("CATFORGE_DEMO", "1") != "0"
     demo_locations = demo_locations or int(os.environ.get("CATFORGE_DEMO_LOCATIONS", "5000"))
@@ -600,6 +601,11 @@ def create_app(model: CatModel | None = None, data_dir: str | None = None, demo:
             raise HTTPException(404, "tile out of range")
         return Response(terrarium_tile(z, x, y), media_type="image/png",
                         headers={"Cache-Control": "public, max-age=86400"})
+
+    # Google Photorealistic 3D Tiles pass-through + integrations discovery
+    from . import tiles3d
+
+    tiles3d.register(app, key=google_maps_key, transport=google_transport)
 
     # ------------------------------------------------------------------ jobs
     @app.get("/api/jobs", tags=["jobs"])

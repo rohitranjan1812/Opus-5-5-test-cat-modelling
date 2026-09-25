@@ -11,8 +11,12 @@
   },
   "dependencies": {
     "@deck.gl/core": "^9.4.0",
+    "@deck.gl/extensions": "^9.4.0",
+    "@deck.gl/geo-layers": "^9.4.0",
     "@deck.gl/layers": "^9.4.0",
     "@deck.gl/mapbox": "^9.4.0",
+    "@loaders.gl/3d-tiles": "^4.5.2",
+    "@loaders.gl/core": "^4.5.2",
     "echarts": "^6.1.0",
     "leaflet": "^1.9.4",
     "maplibre-gl": "^6.11.2",
@@ -28,5 +32,9 @@
     "oxlint": "^1.81.0",
     "typescript": "~6.0.2",
     "vite": "^8.3.0"
+  },
+  "overrides": {
+    "fflate": "^0.8.2",
+    "image-size": "^2.0.3"
   }
 }

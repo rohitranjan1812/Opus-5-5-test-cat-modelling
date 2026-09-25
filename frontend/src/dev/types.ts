@@ -18,7 +18,7 @@ export interface TcDev {
   }) | { error: string }
   sites: null | {
     n: number; loc_id: string[]; lat: number[]; lon: number[]; tiv: number[]; construction: string[]; occupancy: string[]
-    elev: number[]; gust: B64; damage: B64; surge_depth: B64
+    elev: number[]; gust: B64; damage: B64; surge_depth: B64; gu: number[]; damage_final: number[]
   }
   loss: null | { t: number[]; gu: number[]; gu_wind_only: number[]; n_damaged: number[]; tiv_affected: number }
   cities: City[]

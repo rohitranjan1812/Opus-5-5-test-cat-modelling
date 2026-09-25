@@ -283,6 +283,7 @@ def develop_tc(cat: EventCatalog, name: str, portfolio: Portfolio | None, seed: 
         tiv = portfolio.tiv[idx]
         gu_t = _coverage_loss(tiv, vt.cov[vidx], d_tot)
         gu_w = _coverage_loss(tiv, vt.cov[vidx], d_wind)
+        gu_site_final = gu_t[:, -1]
         loss = {"t": frames.tolist(), "gu": gu_t.sum(axis=0).round(0).tolist(),
                 "gu_wind_only": gu_w.sum(axis=0).round(0).tolist(),
                 "n_damaged": (d_tot > 0.02).sum(axis=0).tolist(), "tiv_affected": float(tiv.sum())}
@@ -292,6 +293,7 @@ def develop_tc(cat: EventCatalog, name: str, portfolio: Portfolio | None, seed: 
             "construction": L["construction"].tolist(), "occupancy": L["occupancy"].tolist(),
             "elev": elevation(site_lat, site_lon, fill=0.0).round(1).tolist(),
             "gust": b64(gust, "int16", 10.0), "damage": b64(d_tot, "int16", 1000.0),
+            "gu": gu_site_final.round(0).tolist(), "damage_final": d_tot[:, -1].round(4).tolist(),
             "surge_depth": b64(depth_frames if depth_frames is not None else np.zeros_like(d_tot), "int16", 100.0),
         }
     out["sites"] = sites_payload

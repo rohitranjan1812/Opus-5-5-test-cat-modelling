@@ -114,3 +114,12 @@ def test_surge_site_depth_is_subgrid_and_starts_dry():
     assert d.shape[0] == 3 and np.all(d[:, 0] == 0.0)
     assert res["site_depth_max"][0] > 1.0
     assert res["site_depth_max"][2] == 0.0
+
+
+def test_synthetic_exposure_stays_on_land():
+    from catforge.exposure.synthetic import generate_portfolio
+
+    L = generate_portfolio(3000, seed=11).locations
+    z = elevation(L["lat"].to_numpy(), L["lon"].to_numpy(), fill=np.nan)
+    assert np.nanmin(z) >= -5.0  # nothing in open water
+    assert np.isfinite(z).mean() > 0.95
