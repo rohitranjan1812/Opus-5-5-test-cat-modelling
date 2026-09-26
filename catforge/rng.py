@@ -36,9 +36,11 @@ TAG_ETA = 0  # event-level (inter-event) hazard residual
 TAG_Z = 1  # event-wide copula factor
 TAG_CELL_BASE = 1 << 40  # spatial cell factors live in a disjoint index range
 TAG_LOC_BASE = 16
-TAG_SURGE_E = 2  # event-level storm-surge water-level error
+TAG_SURGE_E = 2  # event-level storm-surge water-level error (intercept)
+TAG_SURGE_E2 = 3  # event-level storm-surge water-level error (slope on the surge level)
 TAG_SURGE_BASE = 1 << 38  # node-level surge water-level errors (disjoint range)
 TAG_SURGE_WET = 1 << 39  # node-level surge connectivity draws (disjoint range)
+TAG_SURGE_FIELD = 1 << 41  # lattice knots of the correlated surge residual field (disjoint range)
 
 
 @nb.njit(inline="always", cache=True)

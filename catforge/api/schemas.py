@@ -51,6 +51,14 @@ class GrfParams(BaseModel):
     range_km: float | None = Field(None, gt=1, le=1000, description="Practical range (correlation 0.05)")
 
 
+class SurgeFidelityModel(BaseModel):
+    budget: int = Field(0, ge=0, le=500, description="Max hurricanes re-run with the full 2′ surge model (0 = off)")
+    tol: float = Field(0.01, ge=0, le=0.5, description="Stop once the surge error sd of the tail TVaR is below tol·TVaR")
+    rp: float = Field(250.0, ge=2, le=10000, description="Return period of the targeted AEP TVaR")
+    rho: float = Field(0.04, ge=0, le=1, description="Effective correlation of event surge errors (stopping rule)")
+    taper: float = Field(2.0, ge=1, le=5, description="Tail-weight taper: years ranked k…taper·k get a linearly falling weight")
+
+
 class AnalysisConfigModel(BaseModel):
     name: str = "Analysis"
     perils: list[Peril] = Field(default_factory=lambda: ["TC", "EQ"])
@@ -71,6 +79,10 @@ class AnalysisConfigModel(BaseModel):
         "grf", description="Intra-event hazard dependence: Matérn random field (Vecchia NNGP) or legacy two-level copula")
     grf: dict[Peril, GrfParams] = Field(default_factory=dict, description="Per-peril Matérn overrides")
     vecchia_m: int = Field(30, ge=4, le=64, description="Vecchia conditioning-set size (accuracy vs speed)")
+    tc_surge: bool = Field(True, description="Storm surge in the hurricane peril (multi-fidelity 2-D surge)")
+    surge: dict[str, float] = Field(default_factory=dict, description="Calibration overrides, e.g. {'sigma_scale': 1.5}")
+    surge_fidelity: SurgeFidelityModel = Field(default_factory=SurgeFidelityModel,
+                                               description="Uncertainty-driven full-fidelity surge for tail events")
 
 
 class AnalysisRequest(BaseModel):

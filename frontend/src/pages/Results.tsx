@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { EChartsOption } from 'echarts'
 import { api } from '../api'
-import type { AnalysisSummary, EpResponse, SurgeSummary } from '../api'
+import type { AnalysisSummary, EpResponse, SurgeFidelity, SurgeSummary } from '../api'
 import Chart from '../components/Chart'
 import { epOption } from '../components/charts'
 import MapView, { MapLegend } from '../components/MapView'
@@ -127,7 +127,35 @@ function SurgeCard({ sg }: { sg: SurgeSummary }) {
         { key: 's', label: 'Surge-attributed AEP', align: 'r', render: (r) => money(r.surge_gu) },
         { key: 'u', label: 'Uplift from surge', align: 'r', value: (r) => r.uplift ?? 0, render: (r) => (r.uplift == null ? '—' : pct(r.uplift)) },
       ]} />
+      {sg.fidelity && <FidelityPanel fd={sg.fidelity} />}
     </Card>
+  )
+}
+
+function FidelityPanel({ fd }: { fd: SurgeFidelity }) {
+  const d = fd.tvar_after / fd.tvar_before - 1
+  return (
+    <div className="col mt" style={{ gap: 12 }}>
+      <h3 style={{ margin: 0 }}>Fidelity allocation — 1-in-{fd.rp} TVaR</h3>
+      <div className="grid g4">
+        <Tile label="Full-fidelity events" value={`${fd.upgraded.length} / ${fd.budget}`}
+          foot={`${num(fd.n_candidates)} candidates · ${fd.tol_met ? 'tolerance met' : 'budget spent'}`} />
+        <Tile label="Surge-error sd of TVaR" value={`${pct(fd.u_before_rel, 2)} → ${pct(fd.u_after_rel, 2)}`}
+          foot={`${money(fd.u_before)} → ${money(fd.u_after)} (ρ̄ ${fd.rho})`} />
+        <Tile label="TVaR, surrogate → with full model" value={`${money(fd.tvar_before)} → ${money(fd.tvar_after)}`}
+          foot={`Realised change ${pct(d, 1)}`} />
+        <Tile label="VaR" value={`${money(fd.var_before)} → ${money(fd.var_after)}`}
+          foot={fd.hf_seconds != null ? `${fd.hf_seconds.toFixed(0)} s of full-model runs` : ''} />
+      </div>
+      {fd.upgraded.length > 0 && <DataTable rows={fd.upgraded} maxHeight={260} columns={[
+        { key: 'name', label: 'Event' },
+        { key: 'share', label: 'Share of tail surge error', align: 'r', render: (r) => pct(r.share, 1) },
+        { key: 'a', label: 'Tail sensitivity a', align: 'r', render: (r) => r.tail_sensitivity.toFixed(3) },
+        { key: 'sd', label: 'Surge sd (surrogate)', align: 'r', render: (r) => money(r.sd_surge_gu) },
+        { key: 'b', label: 'Mean surge: surrogate', align: 'r', render: (r) => money(r.mean_surge_gu_before) },
+        { key: 'f', label: 'Full model', align: 'r', render: (r) => money(r.mean_surge_gu_after) },
+      ]} />}
+    </div>
   )
 }
 

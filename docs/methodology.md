@@ -109,11 +109,19 @@ full model.
 **Low fidelity, for every event (`hazard/surge.py`).** This is the same solver as §9.1, with three
 differences:
 
-- a landfall-centred box (±2.0° lat × ±2.5° lon) at 4′ (stride 2 on the 2′ DEM);
-- Δt = 90 s, with forcing refreshed every 12 steps, from −15 h to +9 h around landfall;
+- a coarser, cheaper domain: the landfall box (±2.0° lat × ±2.5° lon), united with the padded
+  bounding box of the track points within 250 km of the coast, at 4′ (stride 2 on the 2′ DEM);
+- Δt = 90 s, with forcing refreshed every 12 steps, over the full model's window (−18 h to +12 h);
 - the whole time loop is fused into one `nogil` numba call, so events run concurrently on threads.
 
-That is about 0.07 s per event threaded and 0.27 s serial, **roughly 40–100× cheaper than the full
+The domain follows the track along the coast for a reason. Version 1 used the landfall box alone,
+and the fidelity-allocation diagnostics (§1.5) exposed it. A storm that passes Tampa Bay offshore at
+hurricane strength, then makes landfall in the Panhandle 400 km away, floods Tampa, but Tampa was
+outside the box. The surrogate saw 3–8 % of that surge, with zero uncertainty, because a site
+with no low-fidelity water gets no surge draws at all. Storms running up the coast from Florida to
+the Carolinas had the same problem.
+
+That is about 0.13 s per event threaded and 0.5 s serial, **roughly 10–40× cheaper than the full
 model**. Open-coast peaks agree with the full model within 0–10 % (Hugo 5.93 vs 5.92 m, Ian 6.29 vs
 6.49 m, Michael 4.57 vs 4.86 m).
 
@@ -137,7 +145,7 @@ set has three parts, and both models are run on every storm:
 - the 9 historical analogs.
  Every coastal 2′ node inside the box is recorded: land nodes,
 plus shoreline water nodes, which is where waterfront buildings geocode on a coarse DEM. That gives
-305,153 node-events from 224 storms, and the full model's value is the peak water surface in the
+448,584 node-events from 224 storms, and the full model's value is the peak water surface in the
 node's 3×3 stencil — the rule the engine applies to buildings. Two processes decide what a node sees:
 
 - **connectivity.** P(wet) = σ(θ·[1, x, z, shore, x·z, x − z, (x − z)₊, Δ, Δ·shore]), a logistic
@@ -155,14 +163,28 @@ water across a bay, that water travels over water and amplifies (funnelling) ins
 Δ lets the model learn this, and it cuts held-out error in water over 1 m deep by 8 %. A per-node
 random *slope* on x (a multiplicative site amplification, fitted as a 2×2 random effect) was tried
 instead. With two or three big storms per bay it overfits, and held-out error rises; physical
-covariates and design coverage do the job instead. The shrunk δ̂<sub>n</sub> and its posterior variance are stored for 8,413 nodes
+covariates and design coverage do the job instead. The shrunk δ̂<sub>n</sub> and its posterior variance are stored for 8,664 nodes
 (`data/surge_site_response.npz`). Nodes the design set never reached get the prior (0, τ²).
 
 Penetration parameters are chosen by 5-fold, event-grouped cross-validation of flood depth over the
 engine's default ground (the 2′ DEM floored at 1 m). The CV surface is flat for α between 0.2 and
-0.3 m/km and R between 20 and 30 km. Among fits within 1 % of the best, the largest R is taken,
-because misses (flooded nodes that no 4′ cell reaches) are one-sided. The result is **α = 0.3 m/km,
-R = 20 km, r₀ = 3.5 km, σ = 0.42 m, σ<sub>e</sub> = 0.14 m, τ = 0.32 m.**
+0.3 m/km. Among fits within 1 % of the best, the largest R is taken, because misses (flooded nodes
+that no 4′ cell reaches) are one-sided. The result is **α = 0.3 m/km, R = 20 km, r₀ = 3.5 km,
+σ = 0.37 m, τ = 0.27 m.**
+
+**The error model has three components.**
+
+- **An event-wide error that grows with the surge,** u<sub>e0</sub> + u<sub>e1</sub>·(x − 2), with
+  (u<sub>e0</sub>, u<sub>e1</sub>) ~ N(0, Ψ). The event-mean residual's sd rises from 0.18 m at
+  x ≈ 1 to 0.32 m at x ≥ 3, so a constant event term misstates big storms. The EM fits Ψ jointly
+  with the node terms, giving sd 0.13 m at x = 2 and 0.23 m at x = 5 (correlation 0.83). A per-event
+  slope is well identified, because each event carries hundreds of nodes.
+- **A spatially correlated residual within the event.** Its correlation is about 0.8 at 3 km, 0.44
+  at 9 km, 0.19 at 17 km and about 0 beyond 40 km, because whole bays are off together. The fit is
+  σ²·[0.54·exp(−d²/4·3.9²) + 0.32·exp(−d²/4·9.5²)] with d in km, which leaves a 14 % nugget.
+  Treating node residuals as independent would average them away over the hundreds of buildings an
+  event floods, and the event's loss uncertainty would be several times too small.
+- **The node's site response δ<sub>n</sub>** with its posterior variance.
 
 **Why a hurdle model and not a Tobit.** Both look principled. At x ≥ 2 m, the held-out residuals of a
 censored single-Gaussian model have skew −0.8 to −2.1 and excess kurtosis 3–7. The error is a
@@ -174,14 +196,14 @@ held-out E[depth] / full-model depth:
 
 | low-fidelity level x | 1–2 m | 2–3 m | 3–4 m | 4–6 m | ≥ 6 m | ground 3–5 m (x ≥ 2) |
 |---|---|---|---|---|---|---|
-| **hurdle (engine)** | **0.94** | **0.98** | **0.97** | **0.98** | **1.01** | **0.96** |
-| Tobit + site term | 1.07 | 0.80 | 0.72 | 0.68 | 0.65 | 0.43 |
-| OLS on wet-in-both pairs | 1.20 | 0.87 | 0.75 | 0.71 | 0.69 | 0.42 |
+| **hurdle (engine)** | **0.93** | **0.98** | **0.97** | **0.98** | **1.01** | **0.93** |
+| Tobit + site term | 1.02 | 0.77 | 0.69 | 0.65 | 0.63 | 0.38 |
+| OLS on wet-in-both pairs | 1.14 | 0.81 | 0.70 | 0.65 | 0.64 | 0.33 |
 
-Overall, the hurdle model has a held-out depth RMSE of 0.39 m (misses included), 0.50 m where the
-water is over 1 m deep, an aggregate depth bias of −0.3 %, a hit rate of 0.91 and a false-alarm
-ratio of 0.12. The Tobit and the OLS reach 0.83 m and 0.78 m in deep water. The OLS on wet pairs is
-a truncated sample, so it is biased too: +16 % in aggregate.
+Overall, the hurdle model has a held-out depth RMSE of 0.35 m (misses included), 0.45 m where the
+water is over 1 m deep, an aggregate depth bias of −1.7 %, a hit rate of 0.89 and a false-alarm
+ratio of 0.10. The Tobit and the OLS reach 0.84–0.86 m in deep water. The OLS on wet pairs is a truncated
+sample, so it is biased too: +16 % in aggregate.
 Recalibrate with `python scripts/calibrate_surge.py collect && … fit` (about 10 minutes, then about
 10 seconds).
 
@@ -191,8 +213,15 @@ by the building's **2′ node** n, not by the building. In the full model, build
 one stencil water level, so a concentrated book must not diversify that risk away:
 
 - wet if u(k, WET + n) < π;
-- ζ = WSE + σ<sub>e</sub>Φ⁻¹(u(k, SURGE_E)) + σ<sub>s,j</sub>Φ⁻¹(u(k, SURGE + n)), with
-  σ<sub>s,j</sub>² = σ² + Var δ̂<sub>n</sub>;
+- ζ = WSE + U<sub>k</sub>(x) + C<sub>k</sub>(n) + σ<sub>s,j</sub>Φ⁻¹(u(k, SURGE + n)), with:
+  - U<sub>k</sub>(x) = u₀ + u₁(x − 2), the event error, drawn through the Cholesky factor of Ψ;
+  - C<sub>k</sub>(n) = Σ<sub>m</sub> w<sub>nm</sub>Φ⁻¹(u(k, FIELD + m)), the correlated field, a
+    two-lattice **process convolution**. Lattice knots of spacing h<sub>i</sub> get counter-RNG
+    normals, and Gaussian weights normalised to Σw² = 1 give every node exactly the variance
+    σ²s<sub>i</sub> and correlation exp(−d²/4h<sub>i</sub>²), reproduced to within 0.013. Knot draws
+    are memoised per occurrence, so the field stays bit-reproducible and independent of the thread
+    count.
+  - σ<sub>s,j</sub>² = σ²·nugget + Var δ̂<sub>n</sub>;
 - depth = ζ − g<sub>j</sub>, where g<sub>j</sub> is measured ground (§9.4) or else the 2′ DEM
   floored at 1 m;
 - D<sub>s</sub> = m<sub>j</sub>·f(depth − ff<sub>j</sub>), using USACE-style depth–damage curves,
@@ -207,37 +236,97 @@ the surge AAL share and the hurricane AEP with and without surge (`summary.surge
 
 **Validation on the tail against the full model (`scripts/validate_surge_tail.py`,
 `docs/validation/surge_tail.json`).** The test case is the demo book (5,000 locations), hurricane
-only, 10,000 years. The 200 worst years (1-in-50 and rarer) are driven by 174 events. Each is re-run
-with the full 2′ model at every coastal building, and exactly those occurrences are re-simulated with
-full-model water levels. Residuals and the connectivity draw are switched off, and the occurrence
-keys are unchanged, so wind uses common random numbers. 12 of the 174 were calibration storms; the
-rest are out of sample.
+only, 10,000 years. Every event that matters takes the full 2′ model's water levels through the
+engine's own path, and exactly its occurrences are re-simulated with the occurrence keys unchanged,
+so wind uses common random numbers. "Every event that matters" is 606 events: the tail of the 200
+worst years, every event of the 120 worst years, and every event fidelity allocation (§1.5) picked
+at any budget.
 
-| Hurricane AEP (GU, surge included) | engine | full model on tail events | engine vs full | wind only |
+| Hurricane GU, surge included | engine (surrogate only) | full-model reference | engine vs reference | wind only |
 |---|---|---|---|---|
-| 1-in-100 | $486.5m | $503.8m | −3.4 % | $381.9m |
-| 1-in-250 | $582.2m | $604.0m | **−3.6 %** | $497.3m |
-| 1-in-500 | $663.8m | $691.9m | −4.1 % | $584.8m |
+| AEP 1-in-100 | $488.0m | $497.8m | −2.0 % | $381.9m |
+| AEP 1-in-250 | $605.2m | $606.5m | −0.2 % | $497.3m |
+| AEP 1-in-500 | $683.7m | $692.3m | −1.3 % | $584.8m |
+| TVaR 1-in-250 | $728.6m | $737.3m | **−1.2 %** | $618.9m |
 
-Compute: the full model takes 5.8 s per event and the low-fidelity model 0.24 s serial (0.07 s
-threaded), about 24× cheaper serial and about 90× in the engine. A warm 10,000-year hurricane
-analysis with surge takes 21 s; the first run of a catalog adds about 4 minutes of low-fidelity runs,
-which are then cached. On this book surge is 43 % of hurricane ground-up AAL (1,604 of 5,000
-locations reached; the book has no measured ground). It adds +67 % at 1-in-10, +27 % at 1-in-100 and
-+17 % at 1-in-250.
+Summed over the tail events, the surrogate's surge loss is 0.95× the full model's. The earlier
+release was at 0.80–0.84× before the low-fidelity domain followed the track and the error model got
+its severity-scaled event term and correlated field.
 
-**Known limitation.** Summed over the tail events, the engine's surge-attributed loss is 0.84× the
-full model's (0.84× out of sample too). The shortfall concentrates in the largest surge events: the
-ten biggest, which are Tampa Bay and Big Bend funnel storms, come out at 0.67×. There the 4′ grid
-under-resolves the bay, and a calibration shared across the coast cannot recover a storm-specific
-funnel response. Two things were tried and did not fix it:
+**Is the surrogate's uncertainty honest?** For 166 tail events, the full model's expected surge loss
+was compared with the surrogate's distribution under identical wind draws (64 samples):
+z = (full − mean)/epistemic sd.
 
-- a per-node random slope (it overfits);
-- a denser intense-storm design (it moved the tail ratio from 0.77 to 0.84).
+| | z mean (ideal 0) | z sd (ideal 1) | share with \|z\| > 2 (ideal ≈ 5 %) |
+|---|---|---|---|
+| v1 domain, global event term, independent node residuals | +3.48 | 14.0 | 23 % |
+| **v2 domain, event slope, correlated field (engine)** | **+0.44** | **1.81** | **9.6 %** |
 
-The total AEP holds within 4 % because wind dominates this book's 1-in-250. The targeted fix is
-*fidelity allocation*: re-run the portfolio's top tail events at full fidelity. That is exactly what
-this validation does, at about 6 s per event.
+The uncertainty is now informative but still about 1.8× under-dispersed. The stopping rule of §1.5
+absorbs this in an effective correlation ρ̄.
+
+Compute: the full model takes about 5 s per event, the low-fidelity model 0.5 s serial and 0.13 s
+threaded. A fresh 10,000-year hurricane analysis with surge takes 21 s once the low-fidelity product
+is cached; building that cache for a catalog takes about 10 minutes, once. On this book surge is 43 %
+of hurricane ground-up AAL (1,604 of 5,000 locations reached; the book has no measured ground). It
+adds +71 % at 1-in-10, +28 % at 1-in-100 and +22 % at 1-in-250.
+
+### 1.5 Fidelity allocation — full-model surge where the tail needs it (`engine/fidelity.py`)
+
+With `surge_fidelity = {"budget": K, "tol": τ, "rp": T}`, the engine spends up to K full-model runs
+on the hurricanes that reduce the surge error of the reported 1-in-T AEP TVaR the most. After the
+first ELT and YLT passes:
+
+1. **Tail sensitivity a<sub>e</sub>.** This is the *realised* Euler gradient of this simulation's
+   TVaR: the number of e's occurrences in the k = n/T worst simulated years, divided by k, with the
+   year weight tapering linearly to 0 at rank 2k. The taper hedges against years crossing the tail
+   boundary once losses change.
+2. **Resolvable uncertainty V<sub>e</sub>.** The variance of e's surge-attributed loss over its ELT
+   samples. The track is fixed per catalog event, so every surge draw is epistemic with respect to
+   the full model: the event error, the correlated field, the nugget and connectivity. One full-model
+   run removes them all.
+3. **Order and stopping.** Events are upgraded in order of a<sub>e</sub>·sd<sub>e</sub>. The
+   stopping rule uses U² = (1 − ρ̄)·Σa²V + ρ̄·(Σa·sd)², which interpolates between independent
+   (ρ̄ = 0) and fully coherent (ρ̄ = 1) event errors. The ordering by a·sd is optimal at both ends.
+   The engine stops at the first K with U ≤ τ·TVaR, or at the budget.
+4. **Upgrade and exact re-simulation.** The chosen events take the full model's water levels (cached
+   per event, portfolio-independent), with residual and connectivity draws switched off. Exactly
+   their ELT rows and YLT occurrences are re-simulated, and every other draw is unchanged (common
+   random numbers). Location AAL is patched with the exact delta (new − old, same keys), so it still
+   sums to the ELT AAL to 10⁻⁹.
+
+**Why the realised gradient, not the expected one.** The first version used the expected tail
+participation, λ<sub>e</sub>·T·E<sub>s</sub>[P(A ≥ VaR − L<sub>e,s</sub>)]. An oracle study on the
+demo book decomposed the TVaR error exactly by event. The error is extremely concentrated, with 6
+events holding 59 % of Σc<sub>e</sub>². An event that never lands in a simulated tail year carries
+none of the error in the reported number, however likely it is to do so in expectation. The table
+gives the exact TVaR₂₅₀ error after upgrading K events, against the full-model reference:
+
+| K | 3 | 6 | 12 | 24 | 48 | 96 |
+|---|---|---|---|---|---|---|
+| expected participation | −1.23 % | −1.29 % | −1.24 % | −1.29 % | −1.26 % | −1.07 % |
+| random events from tail years | −1.17 % | −1.17 % | −1.16 % | −1.12 % | −1.13 % | −1.01 % |
+| **realised participation, taper 2k (engine)** | −1.44 % | −1.26 % | −1.11 % | **−0.44 %** | **−0.47 %** | **−0.08 %** |
+| oracle (knows each event's error) | −0.52 % | −0.38 % | −0.29 % | +0.04 % | −0.03 % | 0.00 % |
+
+The engine run through `run_analysis` reproduces its row exactly. Event errors are signed, so a
+small K can overshoot; −1.44 % at K = 3 is an example.
+
+**Choosing ρ̄.** The baseline's realised TVaR₂₅₀ error of −1.17 % sits between U(ρ̄ = 0) = 0.53 %
+and U(ρ̄ = 1) = 5.46 %, at ρ̂ = 0.037. The default ρ̄ = 0.04 is an *effective* parameter: it absorbs
+both the cross-event correlation of errors and the 1.8× under-dispersion above. With it, the
+stopping rule's estimate tracks the realised error:
+
+| tolerance τ | events picked | U after (estimate) | realised TVaR₂₅₀ error after |
+|---|---|---|---|
+| 1 % | 9 | 0.99 % | −1.19 % |
+| 0.5 % | 50 | 0.49 % | −0.42 % |
+| 0.25 % | 96 | 0.25 % | −0.08 % |
+
+The cost is one full-model run per pick, about 5 s the first time; the fields are cached and shared
+by every portfolio. The Results page shows the uncertainty before and after, the realised TVaR
+change, and the events upgraded. ρ̄ was estimated on one book. A second, differently concentrated
+book is the obvious next check.
 
 ---
 
@@ -448,6 +537,11 @@ reports the Pareto frontier of expected net cost against net 1-in-200 AEP.
 - **Surge solver.** A uniform wind stress on a closed flat basin reaches the analytic set-up
   Δη = τL/(ρgh) within 6 %, and volume is conserved to 10⁻⁹ m. The Hugo analog peaks at 4–8 m
   near Bulls Bay. Buildings do not start flooded, coastal buildings flood, inland ones stay dry.
+- **Fidelity allocation.** Allocation orders events by tail weight × sd and stops at the tolerance
+  or the budget. Realised tail participation equals the Euler count with the taper. An end-to-end
+  run with K = 2 upgrades exactly those events: every other occurrence is bit-identical to the run
+  without allocation, and location AAL still sums to the ELT AAL to 10⁻⁹. The two-lattice process
+  convolution gives each node exactly σ²Σs<sub>i</sub> and the calibrated correlation to within 0.03.
 - **Stochastic surge.** The low-fidelity peak tracks the full model (Hugo 4.5–7.5 m near Bulls
   Bay). Friction-limited site extraction matches its closed form. The crossed mixed model recovers
   known parameters from censored synthetic data (slope ±0.03, τ ±0.05, δ̂ correlation > 0.95) while

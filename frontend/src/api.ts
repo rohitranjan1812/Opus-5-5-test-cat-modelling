@@ -38,7 +38,15 @@ export interface SurgeSummary {
   aal_gu: number; tc_aal_gu: number; share_of_tc_aal_gu: number
   aep: { rp: number; tc_gu: number; tc_gu_wind_only: number; surge_gu: number; uplift: number | null }[]
   n_pairs_with_water: number; n_locations_reached: number; n_locations_measured_ground: number
-  n_locations_with_site_response: number; mean_p_wet: number | null; model: Record<string, number | string | null>
+  n_locations_with_site_response: number; mean_p_wet: number | null; model: Record<string, unknown>
+  fidelity: SurgeFidelity | null
+}
+export interface SurgeFidelity {
+  rp: number; tol: number; budget: number; rho: number; n_candidates: number; tol_met: boolean
+  u_before: number; u_after: number; u_before_rel: number; u_after_rel: number
+  var_before: number; var_after: number; tvar_before: number; tvar_after: number; hf_seconds?: number
+  upgraded: { event: number; name: string; tail_sensitivity: number; sd_surge_gu: number; share: number
+    mean_surge_gu_before: number; mean_surge_gu_after: number }[]
 }
 export interface AnalysisBrief {
   id: string; name: string; portfolio_id: string; portfolio_name: string; created: string; n_years: number

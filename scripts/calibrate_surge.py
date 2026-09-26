@@ -40,9 +40,17 @@ from pathlib import Path
 import numpy as np
 
 from catforge.engine.model import CatModel
-from catforge.hazard.surge import LF, _tracks, cache_dir, coastal_mask, landfall_point, lf_event_cells
-from catforge.physics.surge2d import H_DRY, run_surge
-from catforge.physics.tc_dynamics import track_arrays
+from catforge.hazard.surge import (
+    LF,
+    _tracks,
+    cache_dir,
+    coastal_mask,
+    hf_event_fields,
+    lf_domain,
+    lf_event_cells,
+)
+from catforge.physics.dem import elevation
+from catforge.physics.surge2d import H_DRY
 from catforge.scenario import ANALOGS, build_event
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -82,16 +90,17 @@ def design_events(cat, n, rng):
     return np.array(picks[:n])
 
 
-def coastal_nodes(res, la, lo, lf=LF):
-    """2′ nodes a building could stand on inside the LF box, with the full model's stencil water level."""
-    lat, lon, z, em, dm = res["lat"], res["lon"], res["z"], res["eta_max"], res["depth_max"]
-    iy = np.nonzero(np.abs(lat - la) <= lf["half_lat"])[0]
-    ix = np.nonzero(np.abs(lon - lo) <= lf["half_lon"])[0]
+def coastal_nodes(fld, box):
+    """2′ nodes a building could stand on inside the low-fidelity domain, with the full model's stencil
+    water level. ``fld`` is a cached full-model field (peak water surface, NaN where dry)."""
+    lat, lon, w = fld["lat"], fld["lon"], fld["wse"].astype(float)
+    iy = np.nonzero((lat >= box[0]) & (lat <= box[1]))[0]
+    ix = np.nonzero((lon >= box[2]) & (lon <= box[3]))[0]
     if iy.size < 3 or ix.size < 3:
         return None
-    Y, X = np.meshgrid(iy, ix, indexing="ij")
-    Y, X = Y.ravel(), X.ravel()
-    ny, nx = z.shape
+    ny, nx = w.shape
+    LA, LO = np.meshgrid(lat, lon, indexing="ij")
+    z = elevation(LA, LO, fill=0.0)  # exact at grid nodes
     off = np.array([-1, 0, 1])
 
     def stencil(Y, X):
@@ -100,6 +109,8 @@ def coastal_nodes(res, la, lo, lf=LF):
         sy, sx = np.broadcast_arrays(sy, sx)
         return sy.reshape(Y.size, 9), sx.reshape(Y.size, 9)
 
+    Y, X = np.meshgrid(iy, ix, indexing="ij")
+    Y, X = Y.ravel(), X.ravel()
     zn = z[Y, X]
     sy, sx = stencil(Y, X)
     # land nodes, plus shoreline water nodes (land in the stencil): where waterfront buildings geocode on a 2′ DEM
@@ -108,8 +119,8 @@ def coastal_nodes(res, la, lo, lf=LF):
     keep = coastal_mask(lat[Y], lon[X])
     Y, X = Y[keep], X[keep]
     sy, sx = stencil(Y, X)
-    wet = dm[sy, sx] > H_DRY
-    wse = np.where(wet, em[sy, sx], -np.inf).max(axis=1)
+    ws = w[sy, sx]
+    wse = np.where(np.isfinite(ws), ws, -np.inf).max(axis=1)
     cz = z[sy, sx].min(axis=1) + H_DRY  # a dry stencil means water stayed below its lowest ground
     return {"lat": lat[Y].astype(np.float32), "lon": lon[X].astype(np.float32), "z": z[Y, X].astype(np.float32),
             "hf": np.where(np.isfinite(wse), wse, np.nan).astype(np.float32), "cz": cz.astype(np.float32)}
@@ -121,18 +132,18 @@ def collect(args):
     design = design_events(cat, args.events, rng)
     if args.reach_per:
         design = np.unique(np.concatenate([design, reach_events(cat, args.reach_per, rng)]))
-    tracks = [("cat", str(int(i)), _tracks(cat, int(i))) for i in design]
-    tracks += [("analog", a, track_arrays(build_event("TC", v["params"]))) for a, v in ANALOGS.items() if v["peril"] == "TC"]
+    storms = [("cat", str(int(i)), cat, int(i)) for i in design]
+    storms += [("analog", a, build_event("TC", v["params"]), 0) for a, v in ANALOGS.items() if v["peril"] == "TC"]
     out = {k: [] for k in ("lat", "lon", "z", "hf", "cz", "cell_lat", "cell_lon", "cell_eta")}
     nptr, cptr, names = [0], [0], []
     t0 = time.time()
-    for k, (kind, name, tr) in enumerate(tracks):
-        la, lo = landfall_point(tr)
+    for k, (kind, name, c, i) in enumerate(storms):
+        tr = _tracks(c, i)
         try:
-            res = run_surge(tr, -18.0, 12.0, keep_frames=False, max_cells=400_000)
+            fld = hf_event_fields(c, [i])[i]  # cached full model (shared with the engine's fidelity allocation)
         except ValueError:
             continue
-        nodes = coastal_nodes(res, la, lo)
+        nodes = coastal_nodes(fld, lf_domain(tr, LF))
         if nodes is None or not nodes["lat"].size:
             continue
         cl, cn, ce = lf_event_cells(tr, LF)
@@ -144,8 +155,8 @@ def collect(args):
         nptr.append(nptr[-1] + nodes["lat"].size)
         cptr.append(cptr[-1] + cl.size)
         names.append(f"{kind}:{name}")
-        print(f"{k + 1}/{len(tracks)} {kind} {name}: {nodes['lat'].size} nodes, HF wet {np.isfinite(nodes['hf']).sum()}, "
-              f"LF cells {cl.size}, stride {res['stride_deg'] * 60:.0f}′, {time.time() - t0:.0f}s", flush=True)
+        print(f"{k + 1}/{len(storms)} {kind} {name}: {nodes['lat'].size} nodes, HF wet {np.isfinite(nodes['hf']).sum()}, "
+              f"LF cells {cl.size}, {time.time() - t0:.0f}s", flush=True)
     RAW.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(RAW, **{k: np.concatenate(v) for k, v in out.items()}, nptr=np.array(nptr),
                         cptr=np.array(cptr), names=np.array(names), lf=json.dumps(LF))
@@ -161,7 +172,7 @@ def fit(args):
     cal["lf"] = json.loads(str(d["lf"]))
     (DATA / "surge_calibration.json").write_text(json.dumps(cal, indent=1))
     np.savez_compressed(DATA / "surge_site_response.npz", **site)
-    print(json.dumps(cal, indent=1))
+    print(json.dumps({k: v for k, v in cal.items() if k not in ("grid", "cv", "field")}, indent=1))
 
 
 def main():

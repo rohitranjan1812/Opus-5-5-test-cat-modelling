@@ -32,6 +32,11 @@ from ..physics.grf import (
     xyz_km,
 )
 from ..vulnerability.damage import BIN_HI, BIN_LO, SURGE_DEPTH, SURGE_DR, VulnTables, build_tables
+from .fidelity import DEFAULTS as FIDELITY_DEFAULTS
+from .fidelity import plan as fidelity_plan
+from .fidelity import tail_participation as fidelity_participation
+from .fidelity import tail_stats as fidelity_tail
+from .fidelity import upgrade as fidelity_upgrade
 from .kernel import loss_kernel
 from .ylt import ELT_KEY_BASE, YLT, rate_change_weights, simulate_ylt
 
@@ -58,6 +63,8 @@ class AnalysisConfig:
     vecchia_m: int = 30
     tc_surge: bool = True  # storm surge as part of the hurricane peril (multi-fidelity 2-D surge hazard)
     surge: dict = field(default_factory=dict)  # overrides of the calibration, e.g. {"sigma_scale": 1.5}
+    # uncertainty-driven full-fidelity surge for the tail: {"budget": events, "tol": rel. TVaR sd, "rp": T}
+    surge_fidelity: dict = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict | None) -> AnalysisConfig:
@@ -75,7 +82,7 @@ class CatModel:
     def __init__(self, catalogs: dict[str, EventCatalog]):
         self.catalogs = catalogs
         self._pairs: dict[tuple[str, str], Pairs] = {}
-        self._surge: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
+        self._surge: dict[tuple, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
 
     @classmethod
     def default(cls, tc_hurricanes: int = 4000, tc_storms: int = 800, tc_seed: int = 2024, eq_seed: int = 7,
@@ -91,8 +98,10 @@ class CatModel:
             progress(1.0)
         return self._pairs[key]
 
-    def surge_for(self, portfolio: Portfolio, pairs: Pairs, cal: dict, progress=None) -> tuple[np.ndarray, np.ndarray]:
-        """Pair-aligned hurricane surge for this portfolio: (wet water level m above MSL, P(wet)); NaN/0 = none.
+    def surge_for(self, portfolio: Portfolio, pairs: Pairs, cal: dict, progress=None):
+        """Pair-aligned hurricane surge for this portfolio: (wet water level m above MSL, P(wet), x − x0).
+
+        NaN/0 = none; x − x0 is the low-fidelity level relative to the event-error pivot.
 
         Low-fidelity 2-D surge runs (disk-cached per catalog) for the events that bring ≥30 m/s gusts to
         surge-reachable locations, site extraction, then the calibrated full-model correction: the wet
@@ -101,6 +110,7 @@ class CatModel:
         from ..hazard.surge import (
             catalog_surge,
             coastal_mask,
+            event_error_chol,
             site_covariates,
             site_response,
             site_wse,
@@ -125,8 +135,11 @@ class CatModel:
             _, zc, shore = site_covariates(lat, lon)
             lvl, pwet = surge_levels(x, x_free, zc[pairs.site], shore[pairs.site], cal)
             wse = lvl + site_response(lat, lon, cal)[0][pairs.site].astype(np.float32)
-        self._surge[key] = (wse, pwet)
-        return wse, pwet
+            xc = np.where(np.isfinite(x), x - event_error_chol(cal)[0], 0.0).astype(np.float32)
+        else:
+            xc = np.zeros(pairs.n_pairs, np.float32)
+        self._surge[key] = (wse, pwet, xc)
+        return wse, pwet, xc
 
     def invalidate(self, peril: str | None = None):
         self._pairs = {k: v for k, v in self._pairs.items() if peril is not None and k[0] != peril}
@@ -174,7 +187,13 @@ class RunContext:
     loc_smod: np.ndarray | None = None
     loc_ssig: np.ndarray | None = None  # per-location site σ: √(σ² + Var δ̂)
     pair_pwet: np.ndarray | None = None  # P(the pair's node connects to the surge)
+    pair_xc: np.ndarray | None = None  # low-fidelity level minus the event-error pivot x0
     loc_node: np.ndarray | None = None  # dense 2′ node id per location (shared surge draws)
+    node_kptr: np.ndarray | None = None  # correlated surge residual: node → lattice-knot CSR (process convolution)
+    node_knot: np.ndarray | None = None
+    node_kw: np.ndarray | None = None
+    knot_key: np.ndarray | None = None
+    ev_hf: np.ndarray | None = None  # 1 = this event's surge comes from the full 2′ model (fidelity allocation)
     p_surge: np.ndarray | None = None
     surge_cal: dict = field(default_factory=dict)
     elt_surge: np.ndarray | None = None  # (relevant events × samples) surge-attributed GU from the ELT pass
@@ -191,8 +210,13 @@ class RunContext:
         n_loc = fin.tiv.shape[0]
         wse = self.pair_wse if self.pair_wse is not None else np.full(self.pair_loc.size, np.nan, np.float32)
         ps = self.p_surge if self.p_surge is not None else np.zeros(len(PERILS), np.int8)
+        from ..hazard.surge import event_error_chol
+
         cal = self.surge_cal or {"sigma_event_m": 0.0}
+        sc = float(cal.get("sigma_scale", 1.0))
+        _, l11, l21, l22 = event_error_chol(cal)
         ssig = self.loc_ssig if self.loc_ssig is not None else np.zeros(n_loc)
+        node = self.loc_node if self.loc_node is not None else np.arange(n_loc, dtype=np.int64)
         out = loss_kernel(
             occ_event, np.asarray(occ_key, np.uint64), occ_w, np.uint64(self.config.seed),
             self.ev_ptr, self.pair_loc, self.pair_logi, self.ev_peril,
@@ -207,11 +231,17 @@ class RunContext:
             int(max(self.max_pairs, 1)), n_chunks,
             g["p_grf"], g["p_phi"], g["vptr"], g["vnbr"], g["vcoef"], g["vsd"], g["clo_ptr"], g["clo"],
             wse, self.pair_pwet if self.pair_pwet is not None else np.ones(self.pair_loc.size, np.float32),
-            self.loc_node if self.loc_node is not None else np.arange(n_loc, dtype=np.int64),
+            self.pair_xc if self.pair_xc is not None else np.zeros(self.pair_loc.size, np.float32),
+            node,
             self.loc_ground if self.loc_ground is not None else np.ones(n_loc),
             self.loc_ffh if self.loc_ffh is not None else np.full(n_loc, 0.5),
             self.loc_smod if self.loc_smod is not None else np.ones(n_loc), ps,
-            float(cal["sigma_event_m"]) * float(cal.get("sigma_scale", 1.0)), ssig, SURGE_DEPTH, SURGE_DR)
+            sc * l11, sc * l21, sc * l22, ssig, SURGE_DEPTH, SURGE_DR,
+            self.node_kptr if self.node_kptr is not None else np.zeros(int(node.max(initial=-1)) + 2, np.int64),
+            self.node_knot if self.node_knot is not None else np.zeros(0, np.int64),
+            self.node_kw if self.node_kw is not None else np.zeros(0),
+            self.knot_key if self.knot_key is not None else np.zeros(0, np.int64),
+            self.ev_hf if self.ev_hf is not None else np.zeros(self.ev_ptr.size - 1, np.int8))
         return out if split else out[:8]
 
 
@@ -264,7 +294,7 @@ class AnalysisResult:
 
 # ----------------------------------------------------------------------------------------------
 def _combine(model: CatModel, portfolio: Portfolio, cfg: AnalysisConfig, fin: FinancialArrays, progress):
-    ev_frames, ptr_parts, loc_parts, li_parts, per_parts, wse_parts, pw_parts = [], [], [], [], [], [], []
+    ev_frames, ptr_parts, loc_parts, li_parts, per_parts, wse_parts, pw_parts, xc_parts = [], [], [], [], [], [], [], []
     offset = 0
     perils = [p for p in PERILS if p in cfg.perils and p in model.catalogs]
     for n, peril in enumerate(perils):
@@ -280,12 +310,14 @@ def _combine(model: CatModel, portfolio: Portfolio, cfg: AnalysisConfig, fin: Fi
                 if progress:
                     progress(0.27 + 0.08 * f, "Storm surge: low-fidelity 2-D runs (cached per catalog)")
 
-            w, pw = model.surge_for(portfolio, pairs, surge_calibration(cfg), progress=ssub)
+            w, pw, xc = model.surge_for(portfolio, pairs, surge_calibration(cfg), progress=ssub)
             wse_parts.append(w)
             pw_parts.append(pw)
+            xc_parts.append(xc)
         else:
             wse_parts.append(np.full(pairs.n_pairs, np.nan, np.float32))
             pw_parts.append(np.zeros(pairs.n_pairs, np.float32))
+            xc_parts.append(np.zeros(pairs.n_pairs, np.float32))
         ev = cat.events
         rate = ev["rate"].to_numpy(float) * float(cfg.rate_multiplier.get(peril, 1.0))
         if peril == "TC" and abs(cfg.tc_intensity_scale - 1.0) > 1e-12:
@@ -306,10 +338,11 @@ def _combine(model: CatModel, portfolio: Portfolio, cfg: AnalysisConfig, fin: Fi
     ev_peril = np.concatenate(per_parts)
     pair_wse = np.concatenate(wse_parts).astype(np.float32)
     pair_pwet = np.concatenate(pw_parts).astype(np.float32)
+    pair_xc = np.concatenate(xc_parts).astype(np.float32)
     # sort pairs within each event by account so the kernel can aggregate accounts contiguously
     ev_of_pair = np.repeat(np.arange(len(events)), np.diff(ev_ptr))
     order = np.lexsort((pair_loc, fin.loc_pol[pair_loc], ev_of_pair))
-    return events, ev_ptr, pair_loc[order], pair_logi[order], ev_peril, pair_wse[order], pair_pwet[order]
+    return events, ev_ptr, pair_loc[order], pair_logi[order], ev_peril, pair_wse[order], pair_pwet[order], pair_xc[order]
 
 
 def surge_summary(ctx: RunContext, ylt: YLT, occ_gu: np.ndarray, occ_surge: np.ndarray) -> dict:
@@ -339,7 +372,7 @@ def surge_summary(ctx: RunContext, ylt: YLT, occ_gu: np.ndarray, occ_surge: np.n
         if "ground_elev_m" in ctx.portfolio.locations else 0,
         "n_locations_with_site_response": int(np.sum(m_seen > 0)),
         "mean_p_wet": float(np.mean(ctx.pair_pwet[np.isfinite(wse)])) if ctx.pair_pwet is not None and np.isfinite(wse).any() else None,
-        "model": {k: cal.get(k) for k in ("model", "alpha_m_per_km", "rmax_km", "sigma_event_m", "sigma_site_m",
+        "model": {k: cal.get(k) for k in ("model", "alpha_m_per_km", "rmax_km", "sigma_event_m", "sigma_site_m", "event_error",
                                            "tau_site_response_m", "cv_depth_rmse_m", "cv_depth_bias", "cv_hit_rate",
                                            "cv_false_alarm_ratio", "n_events", "n_nodes", "source")},
     }
@@ -354,21 +387,39 @@ def surge_calibration(cfg: AnalysisConfig) -> dict:
     return cal
 
 
-def surge_loc_node(portfolio: Portfolio) -> np.ndarray:
-    """Dense id of each location's 2′ node: buildings in one node share their surge draws."""
+def surge_nodes(portfolio: Portfolio) -> tuple[np.ndarray, np.ndarray]:
+    """(sorted unique 2′ node keys, dense node id per location): buildings in one node share their surge draws."""
     from ..hazard.surge import node_key
 
     L = portfolio.locations
-    return np.unique(node_key(L["lat"].to_numpy(float), L["lon"].to_numpy(float)), return_inverse=True)[1].astype(np.int64)
+    keys, inv = np.unique(node_key(L["lat"].to_numpy(float), L["lon"].to_numpy(float)), return_inverse=True)
+    return keys, inv.astype(np.int64)
+
+
+def surge_field(portfolio: Portfolio, cal: dict, keys: np.ndarray, loc_node: np.ndarray) -> dict:
+    """Correlated surge residual field tables for the portfolio's surge-reachable nodes."""
+    from ..hazard.surge import coastal_mask, field_tables
+
+    L = portfolio.locations
+    co = coastal_mask(L["lat"].to_numpy(float), L["lon"].to_numpy(float))
+    active = np.zeros(keys.size, bool)
+    active[loc_node[co]] = True
+    kp, kn, kw, kk = field_tables(keys, active, cal, float(cal.get("sigma_scale", 1.0)))
+    return {"node_kptr": kp, "node_knot": kn, "node_kw": kw, "knot_key": kk}
 
 
 def surge_site_sigma(portfolio: Portfolio, cal: dict) -> np.ndarray:
-    """Per-location site σ = √(σ² + Var δ̂): nodes the calibration never saw carry the full τ²."""
+    """Per-location independent site σ = √(σ²·nugget + Var δ̂); the correlated part is the field.
+
+    Nodes the calibration never saw carry the full τ².
+    """
     from ..hazard.surge import site_response
 
     L = portfolio.locations
     pv = site_response(L["lat"].to_numpy(float), L["lon"].to_numpy(float), cal)[1]
-    return float(cal.get("sigma_scale", 1.0)) * np.sqrt(float(cal["sigma_site_m"]) ** 2 + pv)
+    fld = cal.get("field") or {}
+    nug = float(fld.get("nugget_frac", 1.0)) if fld.get("scales") else 1.0
+    return float(cal.get("sigma_scale", 1.0)) * np.sqrt(float(cal["sigma_site_m"]) ** 2 * nug + pv)
 
 
 def surge_site_arrays(portfolio: Portfolio):
@@ -456,9 +507,11 @@ def build_grf(portfolio: Portfolio, models: dict[str, Matern], sigma_w: dict[str
 
 def build_context(model: CatModel, portfolio: Portfolio, cfg: AnalysisConfig, progress=None) -> RunContext:
     fin = build_financials(portfolio.locations)
-    events, ev_ptr, pair_loc, pair_logi, ev_peril, pair_wse, pair_pwet = _combine(model, portfolio, cfg, fin, progress)
+    events, ev_ptr, pair_loc, pair_logi, ev_peril, pair_wse, pair_pwet, pair_xc = _combine(model, portfolio, cfg, fin,
+                                                                                          progress)
     ground, ffh, smod = surge_site_arrays(portfolio)
     scal = surge_calibration(cfg) if cfg.tc_surge else {}
+    node_keys, loc_node = surge_nodes(portfolio)
     p_surge = np.zeros(len(PERILS), np.int8)
     if cfg.tc_surge and "TC" in cfg.perils:
         p_surge[PERIL_INDEX["TC"]] = 1
@@ -509,7 +562,8 @@ def build_context(model: CatModel, portfolio: Portfolio, cfg: AnalysisConfig, pr
         sigma_within=sigw, catalog_events={p: model.catalogs[p].events for p in cfg.perils if p in model.catalogs},
         grf=grf, pair_wse=pair_wse, loc_ground=ground, loc_ffh=ffh, loc_smod=smod, p_surge=p_surge,
         surge_cal=scal, loc_ssig=surge_site_sigma(portfolio, scal) if cfg.tc_surge else None,
-        pair_pwet=pair_pwet, loc_node=surge_loc_node(portfolio))
+        pair_pwet=pair_pwet, pair_xc=pair_xc, loc_node=loc_node, ev_hf=np.zeros(len(events), np.int8),
+        **(surge_field(portfolio, scal, node_keys, loc_node) if cfg.tc_surge else {}))
 
 
 def _event_caps(ctx: RunContext) -> np.ndarray:
@@ -532,13 +586,18 @@ def _event_caps(ctx: RunContext) -> np.ndarray:
     return np.bincount(e_u, weights=g2, minlength=len(ctx.events))
 
 
+def _elt_occurrences(ctx: RunContext, events: np.ndarray, S: int):
+    """ELT occurrences of ``events`` × S samples: (event, key, weight λ/S). Keys depend on (event, sample) only."""
+    occ_event = np.repeat(events, S)
+    occ_key = (ELT_KEY_BASE + occ_event.astype(np.uint64) * np.uint64(S)
+               + np.tile(np.arange(S, dtype=np.uint64), events.size)).astype(np.uint64)
+    return occ_event, occ_key, np.repeat(ctx.ev_rate[events] / S, S)
+
+
 def run_elt(ctx: RunContext, samples: int, **overrides):
     rel = np.nonzero(ctx.relevant)[0]
     S = int(max(samples, 2))
-    occ_event = np.repeat(rel, S)
-    occ_key = (ELT_KEY_BASE + occ_event.astype(np.uint64) * np.uint64(S)
-               + np.tile(np.arange(S, dtype=np.uint64), rel.size)).astype(np.uint64)
-    occ_w = np.repeat(ctx.ev_rate[rel] / S, S)
+    occ_event, occ_key, occ_w = _elt_occurrences(ctx, rel, S)
     gu, gross, pr, _, loc_g, loc_gu, _, _, sg = ctx.kernel(occ_event, occ_key, occ_w, want_loc=True, split=True,
                                                            **overrides)
     ctx.elt_surge = sg.reshape(rel.size, S)
@@ -560,6 +619,57 @@ def run_analysis(model: CatModel, portfolio: Portfolio, cfg: AnalysisConfig, pro
     prog(0.40, "Event loss table")
     t1 = time.time()
     rel, S, gu_s, gross_s, pr_s, loc_aal_g, loc_aal_gu = run_elt(ctx, cfg.elt_samples)
+    timings["elt_s"] = round(time.time() - t1, 3)
+
+    # ---- YLT pass --------------------------------------------------------------------------
+    prog(0.55, "Year loss table simulation")
+    t2 = time.time()
+    ylt = simulate_ylt(ctx.ev_rate, ctx.ev_peril, ctx.relevant, ctx.freq, cfg.n_years, cfg.seed)
+    gu, gross, pr, grp, _, _, _, _, occ_surge = ctx.kernel(ylt.event, ylt.key, n_grp=len(ctx.grp_names), split=True)
+    timings["ylt_s"] = round(time.time() - t2, 3)
+
+    # ---- surge fidelity allocation: full 2′ model where it reduces the tail error most -------------
+    fid = None
+    fcfg = {**FIDELITY_DEFAULTS, **(cfg.surge_fidelity or {})}
+    if cfg.tc_surge and "TC" in cfg.perils and int(fcfg["budget"]) > 0:
+        t4 = time.time()
+        prog(0.62, "Surge fidelity allocation")
+        annual = np.bincount(ylt.year, weights=gu, minlength=ylt.n_years)
+        a_tail = fidelity_participation(ylt.year, ylt.event, annual, float(fcfg["rp"]), ctx.ev_ptr.size - 1,
+                                        float(fcfg["taper"]))[rel]
+        p = fidelity_plan(ctx.ev_rate[rel], gu_s, ctx.elt_surge, annual, ctx.ev_peril[rel] == PERIL_INDEX["TC"],
+                          int(fcfg["budget"]), float(fcfg["tol"]), float(fcfg["rp"]), float(fcfg["rho"]), a=a_tail)
+        rows = p["rows"]
+        fid = {k: p[k] for k in ("u_before", "u_after", "tol_met", "n_candidates", "u_independent", "u_coherent")}
+        fid["u_before_rel"], fid["u_after_rel"] = p["u_before"] / p["tvar"], p["u_after"] / p["tvar"]
+        fid.update({"rp": float(fcfg["rp"]), "tol": float(fcfg["tol"]), "budget": int(fcfg["budget"]),
+                    "rho": float(fcfg["rho"]), "upgraded": []})
+        if rows.size:
+            up = rel[rows]
+            oe, ok, ow = _elt_occurrences(ctx, up, S)
+            old = ctx.kernel(oe, ok, ow, want_loc=True)
+            fid.update(fidelity_upgrade(model, ctx, up, progress=lambda f, m: prog(0.62 + 0.1 * f, m)))
+            new = ctx.kernel(oe, ok, ow, want_loc=True, split=True)
+            surge_before = ctx.elt_surge[rows].mean(1)
+            gu_s[rows], gross_s[rows], pr_s[rows] = (new[i].reshape(rows.size, S) for i in range(3))
+            ctx.elt_surge[rows] = new[8].reshape(rows.size, S)
+            loc_aal_g = loc_aal_g + new[4] - old[4]  # exact: same keys, only these events changed
+            loc_aal_gu = loc_aal_gu + new[5] - old[5]
+            idx = np.nonzero(np.isin(ylt.event, up))[0]
+            o = ctx.kernel(ylt.event[idx], ylt.key[idx], n_grp=len(ctx.grp_names), split=True)
+            gu[idx], gross[idx], pr[idx], occ_surge[idx] = o[0], o[1], o[2], o[8]
+            if len(ctx.grp_names):
+                grp[idx] = o[3]
+            names = ctx.events["name"].to_numpy()
+            fid["upgraded"] = [{"event": int(e), "name": str(names[e]), "tail_sensitivity": float(p["a"][r]),
+                                "sd_surge_gu": float(np.sqrt(p["v"][r])), "share": float(p["lin"][r] / p["lin"].sum()),
+                                "mean_surge_gu_before": float(sb), "mean_surge_gu_after": float(ctx.elt_surge[r].mean())}
+                               for e, r, sb in zip(up, rows, surge_before)]
+        after = np.bincount(ylt.year, weights=gu, minlength=ylt.n_years)
+        (fid["var_before"], fid["tvar_before"]), (fid["var_after"], fid["tvar_after"]) = (
+            fidelity_tail(annual, fid["rp"]), fidelity_tail(after, fid["rp"]))
+        timings["surge_fidelity_s"] = round(time.time() - t4, 3)
+
     caps = _event_caps(ctx)
     ev = ctx.events
     elt = pd.DataFrame({
@@ -570,16 +680,9 @@ def run_analysis(model: CatModel, portfolio: Portfolio, cfg: AnalysisConfig, pro
         "max_sample": gross_s.max(1), "global_index": rel,
     })
     elt["mean_surge_gu"] = ctx.elt_surge.mean(1)
+    elt["surge_full_fidelity"] = ctx.ev_hf[rel].astype(bool) if ctx.ev_hf is not None else False
     elt["aal_contrib"] = elt["rate"] * elt["mean"]
     elt = elt.sort_values("aal_contrib", ascending=False).reset_index(drop=True)
-    timings["elt_s"] = round(time.time() - t1, 3)
-
-    # ---- YLT pass --------------------------------------------------------------------------
-    prog(0.55, "Year loss table simulation")
-    t2 = time.time()
-    ylt = simulate_ylt(ctx.ev_rate, ctx.ev_peril, ctx.relevant, ctx.freq, cfg.n_years, cfg.seed)
-    gu, gross, pr, grp, _, _, _, _, occ_surge = ctx.kernel(ylt.event, ylt.key, n_grp=len(ctx.grp_names), split=True)
-    timings["ylt_s"] = round(time.time() - t2, 3)
 
     # ---- reinsurance ---------------------------------------------------------------------------
     prog(0.78, "Reinsurance & metrics")
@@ -602,6 +705,7 @@ def run_analysis(model: CatModel, portfolio: Portfolio, cfg: AnalysisConfig, pro
         analytic={}, loc_cotvar=np.zeros(portfolio.n), ctx=ctx)
     if cfg.tc_surge and "TC" in cfg.perils:
         res.extras["surge"] = surge_summary(ctx, ylt, gu, occ_surge)
+        res.extras["surge"]["fidelity"] = fid
 
     # ---- metrics ---------------------------------------------------------------------------
     t3 = time.time()

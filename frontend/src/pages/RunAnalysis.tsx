@@ -23,6 +23,9 @@ export default function RunAnalysis() {
   const [rateEQ, setRateEQ] = useState(1)
   const [tcInt, setTcInt] = useState(1)
   const [enso, setEnso] = useState(true)
+  const [surge, setSurge] = useState(true)
+  const [hfBudget, setHfBudget] = useState(24)
+  const [hfTol, setHfTol] = useState(0.5)
   const [dependence, setDependence] = useState<'grf' | 'copula'>('grf')
   const [rangeTC, setRangeTC] = useState(60)
   const [rangeEQ, setRangeEQ] = useState(30)
@@ -49,6 +52,8 @@ export default function RunAnalysis() {
         { name: 'El Niño', prob: 0.25, multiplier: 0.65 }] : [] } },
       dependence, vecchia_m: vecchiaM,
       grf: dependence === 'grf' ? { TC: { range_km: rangeTC }, EQ: { range_km: rangeEQ } } : {},
+      tc_surge: surge,
+      surge_fidelity: { budget: surge ? hfBudget : 0, tol: hfTol / 100, rp: allocRp },
       per_risk: usePR ? pr : null,
       reinsurance: useRe && program.contracts.length ? program : null,
     }
@@ -116,6 +121,13 @@ export default function RunAnalysis() {
           <div className="row mt">
             <label className="check"><input type="checkbox" checked={enso} onChange={(e) => setEnso(e.target.checked)} />ENSO regimes for hurricane frequency</label>
           </div>
+          <div className="row mt" style={{ gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <label className="check"><input type="checkbox" checked={surge} onChange={(e) => setSurge(e.target.checked)} />Storm surge (multi-fidelity 2-D)</label>
+            <NumberField label="Full-fidelity tail events (budget)" value={hfBudget} min={0} max={500} onChange={setHfBudget} />
+            <NumberField label="Tail surge-error tolerance (% of TVaR)" value={hfTol} step={0.25} min={0} max={50} onChange={setHfTol} />
+          </div>
+          <p className="muted small">Hurricanes whose surge uncertainty moves the 1-in-{allocRp} TVaR most are re-run with the full 2′
+            model (~6 s each the first time, then cached), until the remaining error is within tolerance or the budget is spent.</p>
           <div className="row mt" style={{ gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <label className="field"><span>Spatial dependence</span>
               <select value={dependence} onChange={(e) => setDependence(e.target.value as 'grf' | 'copula')}>

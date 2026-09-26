@@ -12,9 +12,14 @@ For each occurrence k of event e (peril p) and each affected site j:
             (in legacy copula mode W is integrated into the table and omitted here)
     Storm surge (hurricane pairs with a water level), a two-part draw keyed by the building's 2′ node n:
     wet   = u(k, WET+n) < π_ej                            connectivity (calibrated logistic)
-    ζ_kj  = WSE_ej + σ_e Φ⁻¹(u(k, SURGE_E)) + σ_s,j Φ⁻¹(u(k, SURGE+n))   wet water surface (m);
-            WSE_ej already carries the site response δ_n, σ_s,j² = σ² + Var(δ_n); buildings sharing a
-            node share both draws, as they share one stencil water level in the full model
+    ζ_kj  = WSE_ej + U_k(x_ej) + C_k(n) + σ_s,j Φ⁻¹(u(k, SURGE+n))   wet water surface (m)
+            U_k(x) = u0 + u1·(x − x0), (u0, u1) = L·Φ⁻¹(u(k, SURGE_E, SURGE_E2)): an event-wide error
+                                                          that grows with the surge level
+            C_k(n) = Σ_m w_nm Φ⁻¹(u(k, FIELD+m))            correlated residual: process convolution of
+                                                          lattice knots m (two scales), memoised per k
+            WSE_ej already carries the site response δ_n; σ_s,j² = σ²·nugget + Var(δ_n). Buildings
+            sharing a node share every draw, as they share one stencil water level in the full model.
+            Events run at full fidelity (ev_hf) take the full model's level as is: no residual draws.
     Ds_kj = m_j · f(ζ_kj − g_j − ff_j)                    depth over the first floor → depth–damage
     D_kj  ← 1 − (1 − D_kj)(1 − Ds_kj)                     wind and surge combined before any terms
     → coverage losses → site terms → account terms → per-risk → occurrence totals
@@ -38,6 +43,7 @@ from ..rng import (
     TAG_LOC_BASE,
     TAG_SURGE_BASE,
     TAG_SURGE_E,
+    TAG_SURGE_E2,
     TAG_SURGE_WET,
     TAG_Z,
     norm_cdf,
@@ -107,8 +113,8 @@ def loss_kernel(occ_event, occ_key, occ_w, seed,
                 pr_ret, pr_lim,
                 n_grp, want_loc, detail_ptr, max_pairs, n_chunks,
                 p_grf, p_phi, vptr, vnbr, vcoef, vsd, clo_ptr, clo,
-                pair_wse, pair_pwet, loc_node, loc_ground, loc_ffh, loc_smod, p_surge, s_sig_e, loc_ssig,
-                s_d, s_dr):
+                pair_wse, pair_pwet, pair_xc, loc_node, loc_ground, loc_ffh, loc_smod, p_surge, ev_l11, ev_l21,
+                ev_l22, loc_ssig, s_d, s_dr, node_kptr, node_knot, node_kw, knot_key, ev_hf):
     K = occ_event.shape[0]
     n_loc = tiv.shape[0]
     gu_out = np.zeros(K)
@@ -130,6 +136,11 @@ def loss_kernel(occ_event, occ_key, occ_w, seed,
         xbuf = np.empty(max_pairs)
         gbuf = np.empty(max_pairs)
         wbuf = np.zeros(n_loc)
+        # per-occurrence memo of the correlated surge field: knots drawn once, nodes summed once
+        knot_val = np.empty(knot_key.shape[0])
+        knot_stamp = np.full(knot_key.shape[0], -1, np.int64)
+        node_val = np.empty(node_kptr.shape[0] - 1)
+        node_stamp = np.full(node_kptr.shape[0] - 1, -1, np.int64)
         k_end = min((c + 1) * chunk, K)
         for k in range(c * chunk, k_end):
             e = occ_event[k]
@@ -155,7 +166,13 @@ def loss_kernel(occ_event, occ_key, occ_w, seed,
                         acc += vcoef[t] * wbuf[vnbr[t]]
                     wbuf[jj] = acc + vsd[per, jj] * norm_ppf(uniform(h, TAG_W_BASE + jj))
             surge = p_surge[per] == 1
-            eps_se = norm_ppf(uniform(h, TAG_SURGE_E)) if surge else 0.0
+            hf = ev_hf[e] == 1
+            u0 = u1 = 0.0
+            if surge and not hf:
+                e1 = norm_ppf(uniform(h, TAG_SURGE_E))
+                e2 = norm_ppf(uniform(h, TAG_SURGE_E2))
+                u0 = ev_l11 * e1
+                u1 = ev_l21 * e1 + ev_l22 * e2
             gu_tot = 0.0
             gross_tot = 0.0
             pr_tot = 0.0
@@ -182,7 +199,21 @@ def loss_kernel(occ_event, occ_key, occ_w, seed,
                         nd = loc_node[j]
                         # a modelled water level reaches this building's node, and the node connects
                         if wl == wl and uniform(h, TAG_SURGE_WET + nd) < pair_pwet[q]:
-                            zeta = wl + s_sig_e * eps_se + loc_ssig[j] * norm_ppf(uniform(h, TAG_SURGE_BASE + nd))
+                            if hf:
+                                zeta = wl
+                            else:
+                                if node_stamp[nd] != k:
+                                    acc = 0.0
+                                    for t in range(node_kptr[nd], node_kptr[nd + 1]):
+                                        kn = node_knot[t]
+                                        if knot_stamp[kn] != k:
+                                            knot_val[kn] = norm_ppf(uniform(h, knot_key[kn]))
+                                            knot_stamp[kn] = k
+                                        acc += node_kw[t] * knot_val[kn]
+                                    node_val[nd] = acc
+                                    node_stamp[nd] = k
+                                zeta = (wl + u0 + u1 * pair_xc[q] + node_val[nd]
+                                        + loc_ssig[j] * norm_ppf(uniform(h, TAG_SURGE_BASE + nd)))
                             depth = zeta - loc_ground[j]
                             if depth > 0.02:
                                 ds = min(1.0, loc_smod[j] * np.interp(depth - loc_ffh[j], s_d, s_dr))

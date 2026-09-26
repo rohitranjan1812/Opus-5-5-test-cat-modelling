@@ -1,9 +1,10 @@
 """Storm surge for the stochastic engine — a multi-fidelity hazard.
 
-**Low fidelity (every event).** The validated 2-D shallow-water solver (``physics/surge2d``), run on a
-landfall-centred box (±2.0° lat × ±2.5° lon) at 4′ (stride 2 on ETOPO1 2′), with a CFL-sized time step,
-from −15 h to +9 h around landfall. The whole time loop is fused into one ``nogil`` numba call, and
-events run concurrently on threads — about 0.1 s per event.
+**Low fidelity (every event).** The validated 2-D shallow-water solver (``physics/surge2d``) at 4′ (stride
+2 on ETOPO1 2′), with a CFL-sized time step, over the full model's window (−18 h…+12 h). The domain is
+the landfall box united with the padded bounding box of the track's near-coast points, so alongshore
+and bypassing storms get the coast they flood. The whole time loop is fused into one ``nogil`` numba
+call, and events run concurrently on threads.
 
 **Event product (portfolio-independent, disk-cached per catalog).** The wet near-shore cells, with
 their peak water-surface elevation η (m above MSL).
@@ -46,8 +47,10 @@ import numpy as np
 from ..physics import surge2d as S
 from ..physics.dem import subgrid
 
-LF_VERSION = 1
-LF = {"stride": 2, "dt": 90.0, "forcing_every": 12, "t0": -15.0, "t1": 9.0, "half_lat": 2.0, "half_lon": 2.5}
+LF_VERSION = 2
+# v2: the domain follows the track along the coast (bypassing and alongshore storms flood far from landfall)
+LF = {"stride": 2, "dt": 90.0, "forcing_every": 12, "t0": -18.0, "t1": 12.0, "half_lat": 2.0, "half_lon": 2.5,
+      "coast_km": 250.0, "pad_lat": 1.25, "pad_lon": 1.5}
 CELL_MIN_Z = -20.0  # keep shelf + land cells (drop open ocean)
 CELL_MIN_ETA = 0.1  # m above MSL
 _CAL_PATH = Path(__file__).resolve().parent.parent / "data" / "surge_calibration.json"
@@ -140,11 +143,28 @@ def landfall_point(tr) -> tuple[float, float]:
     return float(tr[1][i]), float(tr[2][i])
 
 
+def lf_domain(tr, lf: dict = LF) -> tuple[float, float, float, float]:
+    """(lat0, lat1, lon0, lon1) of the low-fidelity run: the landfall box, united with the padded bounding
+    box of the track points within ``coast_km`` of the coast over the run window. An alongshore or
+    bypassing storm (one passing Tampa Bay offshore on its way to the Panhandle) floods coast far from
+    its landfall, and the full model's track-following domain sees it."""
+    from ..exposure.synthetic import _dist_to_coast_km
+
+    la, lo = landfall_point(tr)
+    box = [la - lf["half_lat"], la + lf["half_lat"], lo - lf["half_lon"], lo + lf["half_lon"]]
+    if "coast_km" in lf:
+        m = (tr[0] >= lf["t0"]) & (tr[0] <= lf["t1"])
+        m[m] = _dist_to_coast_km(np.asarray(tr[1][m], float), np.asarray(tr[2][m], float)) <= lf["coast_km"]
+        if m.any():
+            box = [min(box[0], float(tr[1][m].min()) - lf["pad_lat"]), max(box[1], float(tr[1][m].max()) + lf["pad_lat"]),
+                   min(box[2], float(tr[2][m].min()) - lf["pad_lon"]), max(box[3], float(tr[2][m].max()) + lf["pad_lon"])]
+    return box[0], box[1], box[2], box[3]
+
+
 def lf_event_cells(tr, lf: dict = LF) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Low-fidelity run for one track → wet near-shore cells (lat, lon, peak water surface η)."""
-    la, lo = landfall_point(tr)
     try:
-        lat, lon, z = subgrid(la - lf["half_lat"], la + lf["half_lat"], lo - lf["half_lon"], lo + lf["half_lon"])
+        lat, lon, z = subgrid(*lf_domain(tr, lf))
     except ValueError:  # outside DEM coverage
         return np.zeros(0, np.float32), np.zeros(0, np.float32), np.zeros(0, np.float32)
     st = lf["stride"]
@@ -183,9 +203,10 @@ def _tracks(cat, i):
             g["vmax"][a:b].astype(f))
 
 
-def catalog_signature(cat, lf: dict = LF) -> str:
+def catalog_signature(cat, lf: dict = LF, version: int = LF_VERSION) -> str:
+    """Cache key of a catalog's surge product: the track geometry, the model spec and its version."""
     g = cat.geometry
-    h = hashlib.sha1(json.dumps({"v": LF_VERSION, "lf": lf}, sort_keys=True).encode())
+    h = hashlib.sha1(json.dumps({"v": version, "lf": lf}, sort_keys=True).encode())
     h.update(np.ascontiguousarray(cat.events["event_id"].to_numpy(np.int64)).tobytes())
     for k in ("lat", "lon", "dp", "rmax"):
         h.update(np.ascontiguousarray(np.asarray(g[k], np.float32)).tobytes())
@@ -359,6 +380,16 @@ def surge_levels(x, x_free, zc, shore, cal: dict) -> tuple[np.ndarray, np.ndarra
     return np.where(fin, lvl, np.nan).astype(np.float32), np.where(fin, pw, 0.0).astype(np.float32)
 
 
+def event_error_chol(cal: dict) -> tuple[float, float, float, float]:
+    """(x0, L11, L21, L22): Cholesky factor of the event error covariance of (u0, u1), where the error at
+    level x is u0 + u1·(x − x0). Falls back to the intercept-only σ_e."""
+    ee = cal.get("event_error")
+    if not ee:
+        return 2.0, float(cal.get("sigma_event_m", 0.0)), 0.0, 0.0
+    L = np.linalg.cholesky(np.asarray(ee["cov"], float) + 1e-12 * np.eye(2))
+    return float(ee["x0"]), float(L[0, 0]), float(L[1, 0]), float(L[1, 1])
+
+
 def _site_response_map() -> dict:
     global _site_map
     if _site_map is None:
@@ -385,3 +416,127 @@ def site_response(lat, lon, cal: dict) -> tuple[np.ndarray, np.ndarray, np.ndarr
     hit = m["key"][pos] == k
     return (np.where(hit, m["delta"][pos], 0.0).astype(float), np.where(hit, m["pv"][pos], tau2).astype(float),
             np.where(hit, m["m"][pos], 0).astype(int))
+
+
+FIELD_COS_REF = math.cos(math.radians(30.0))  # knot lattice: fixed lon spacing so knots are shared by all sites
+FIELD_RADIUS = 2.5  # kernel support, in widths (the dropped weight² mass is < 0.2 %)
+
+
+def field_tables(node_keys: np.ndarray, active: np.ndarray, cal: dict, scale: float = 1.0):
+    """Process-convolution weights of the correlated surge residual, from each 2′ node to lattice knots.
+
+    For scale i (fraction s_i of σ², width h_i km), knots sit on a lattice of spacing h_i. A node's
+    field value is σ√s_i · Σ_m w_m Z_m with Gaussian weights w_m ∝ exp(−d²/2h_i²), normalised so that
+    Σ w_m² = 1. That gives each node exactly the variance σ²s_i and correlation
+    ≈ exp(−d²/4h_i²) between nodes. Returns CSR arrays over the dense node index:
+    (kptr, knot index, weight in metres, knot RNG key).
+    """
+    from ..rng import TAG_SURGE_FIELD
+
+    n = node_keys.size
+    fld = cal.get("field") or {}
+    scales = fld.get("scales") or []
+    sig = float(cal.get("sigma_site_m", 0.0)) * float(scale)
+    kptr = np.zeros(n + 1, np.int64)
+    if not scales or sig <= 0.0:
+        return kptr, np.zeros(0, np.int64), np.zeros(0), np.zeros(0, np.int64)
+    nlat = (node_keys // 20_000) / 30.0 - 90.0
+    nlon = (node_keys % 20_000) / 30.0 - 180.0
+    keys, wts, counts = [], [], np.zeros(n, np.int64)
+    for i in np.nonzero(active)[0]:
+        kx = 111.32 * math.cos(math.radians(nlat[i]))
+        ks, ws = [], []
+        for si, sc in enumerate(scales):
+            h, amp = float(sc["h_km"]), sig * math.sqrt(float(sc["frac"]))
+            if amp <= 0.0:
+                continue
+            dlat, dlon = h / 110.574, h / (111.32 * FIELD_COS_REF)
+            r = FIELD_RADIUS * h
+            iy = np.arange(math.floor((nlat[i] - r / 110.574) / dlat), math.ceil((nlat[i] + r / 110.574) / dlat) + 1)
+            ix = np.arange(math.floor((nlon[i] - r / kx) / dlon), math.ceil((nlon[i] + r / kx) / dlon) + 1)
+            IY, IX = np.meshgrid(iy, ix, indexing="ij")
+            IY, IX = IY.ravel(), IX.ravel()
+            d2 = ((IY * dlat - nlat[i]) * 110.574) ** 2 + ((IX * dlon - nlon[i]) * kx) ** 2
+            m = d2 <= r * r
+            w = np.exp(-0.5 * d2[m] / (h * h))
+            ks.append(TAG_SURGE_FIELD + (si << 28) + (IY[m] + 8192) * 16384 + (IX[m] + 8192))
+            ws.append(amp * w / math.sqrt(float(np.sum(w * w))))
+        if ks:
+            keys.append(np.concatenate(ks))
+            wts.append(np.concatenate(ws))
+            counts[i] = keys[-1].size
+    kptr[1:] = np.cumsum(counts)
+    if not keys:
+        return kptr, np.zeros(0, np.int64), np.zeros(0), np.zeros(0, np.int64)
+    uk, knot = np.unique(np.concatenate(keys), return_inverse=True)
+    return kptr, knot.astype(np.int64), np.concatenate(wts), uk.astype(np.int64)
+
+
+# ------------------------------------------------------------------------------------------ full fidelity
+HF = {"t0": -18.0, "t1": 12.0, "max_cells": 400_000, "dt": 30.0, "forcing_every": 20, "pad_deg": 2.5}
+
+
+HF_VERSION = 1  # independent of LF_VERSION: the full model's cache survives low-fidelity changes
+
+
+def _hf_path(cat, i: int) -> Path:
+    return cache_dir() / f"hf_{catalog_signature(cat, HF, HF_VERSION)}" / f"{int(i)}.npz"
+
+
+def _hf_run(tr) -> dict:
+    """The reference 2′ model (``run_surge`` with the HF spec): peak water surface, NaN where dry.
+
+    Events run one after another: each run is parallel inside (numba ``prange``), which keeps the
+    grid in cache. Several concurrent serial runs were measured 2–3× slower on 4 cores.
+    """
+    res = S.run_surge(tr, HF["t0"], HF["t1"], pad_deg=HF["pad_deg"], dt=HF["dt"], forcing_every=HF["forcing_every"],
+                      max_cells=HF["max_cells"], keep_frames=False)
+    return {"lat": res["lat"], "lon": res["lon"],
+            "wse": np.where(res["depth_max"] > S.H_DRY, res["eta_max"], np.nan).astype(np.float32)}
+
+
+def hf_event_fields(cat, events, use_cache: bool = True, progress=None) -> dict:
+    """Full 2′ model for catalog events: {i: peak water surface on its grid, NaN where dry}.
+
+    Portfolio-independent and disk-cached per catalog signature and event.
+    """
+    out, todo = {}, []
+    for i in dict.fromkeys(int(v) for v in events):
+        path = _hf_path(cat, i)
+        if use_cache and path.exists():
+            with np.load(path) as zf:
+                out[i] = {"lat": zf["lat"], "lon": zf["lon"], "wse": zf["wse"]}
+        else:
+            todo.append(i)
+    for k, i in enumerate(todo):
+        out[i] = _hf_run(_tracks(cat, i))
+        if use_cache:
+            path = _hf_path(cat, i)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp.npz")
+            np.savez_compressed(tmp, **out[i])
+            os.replace(tmp, path)
+        if progress:
+            progress((k + 1) / len(todo), i)
+    return out
+
+
+def hf_event_field(cat, i: int, use_cache: bool = True) -> dict:
+    """Full 2′ model for one catalog event (see ``hf_event_fields``)."""
+    return hf_event_fields(cat, [i], use_cache=use_cache)[int(i)]
+
+
+def hf_site_wse(fld: dict, lat, lon) -> np.ndarray:
+    """Peak water surface in each site's 3×3 stencil of the full-model grid (the ``run_surge`` rule);
+    NaN if the stencil stayed dry or the site lies outside the domain."""
+    la, lo, w = fld["lat"], fld["lon"], fld["wse"]
+    ny, nx = w.shape
+    cy = np.rint((np.asarray(lat, float) - la[0]) / (la[1] - la[0])).astype(np.int64)
+    cx = np.rint((np.asarray(lon, float) - lo[0]) / (lo[1] - lo[0])).astype(np.int64)
+    out = np.full(cy.size, -np.inf, np.float32)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            v = w[np.clip(cy + dy, 0, ny - 1), np.clip(cx + dx, 0, nx - 1)]
+            out = np.where(np.isfinite(v), np.maximum(out, v), out)
+    inside = (cy >= 0) & (cy < ny) & (cx >= 0) & (cx < nx)
+    return np.where(inside & np.isfinite(out), out, np.nan).astype(np.float32)
